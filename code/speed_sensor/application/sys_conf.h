@@ -8,11 +8,13 @@
 #ifndef SYS_CONF_H
 #define SYS_CONF_H
 
+//#define CSCS_MOCK_ENABLE // enable cscs simulator
+
 /*--------------------------------------------------------------------------------*/
 /********************************* BLE - DEFINITION *******************************/
 /*--------------------------------------------------------------------------------*/
 #define DEVICE_NAME_WITH_SERIAL_NO													/**< switch for enable/disable combination serial number with device name. */
-#define DEVICE_NAME                     "LEZYNE_CSC"	                            /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "LezyneSPD"	                            	/**< Name of device. Will be included in the advertising data. */
 #define MANUFACTURER_NAME               "LEZYNE"                       				/**< Manufacturer. Will be passed to Device Information Service. */
 
 /* According to iOS "Accessory-Design-Guideines.pdf" Version:
@@ -34,7 +36,7 @@
 
 //#define APP_ADV_INTERVAL              40                                          /**< The advertising interval (in units of 0.625 ms. This value corresponds to 25 ms). */
 #define APP_ADV_INTERVAL                (100/0.625)                                 /**< The advertising interval (in units of 0.625 ms. This value corresponds to 100 ms). */
-#define APP_ADV_DURATION                1500                                       /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
+#define APP_ADV_DURATION                6000                                       /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
 
 #define SPEED_SENSOR_LOCATION			BLE_SENSOR_LOCATION_FRONT_WHEEL				/**< the location of sensor. options:
 																						BLE_SENSOR_LOCATION_FRONT_WHEEL,

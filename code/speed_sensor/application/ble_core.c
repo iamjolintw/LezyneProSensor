@@ -57,6 +57,7 @@
 
 #include "sys_conf.h"
 #include "ble_core.h"
+#include "sensor_accelerometer.h"
 
 #include "nordic_common.h"
 #include "nrf.h"
@@ -142,22 +143,12 @@
 
 #define DEAD_BEEF                       0xDEADBEEF                                  /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
-
-//BLE_CSCS_DEF(m_cscs);                                                               /**< Cycling speed and cadence service instance. */
+BLE_CSCS_DEF(m_cscs);                                                               /**< Cycling speed and cadence service instance. */
 NRF_BLE_GATT_DEF(m_gatt);                                                           /**< GATT module instance. */
 NRF_BLE_QWR_DEF(m_qwr);                                                             /**< Context for the Queued Write module.*/
 BLE_ADVERTISING_DEF(m_advertising);                                                 /**< Advertising module instance. */
-APP_TIMER_DEF(m_csc_meas_timer_id);                                                 /**< CSC measurement timer. */
 
 static uint16_t          m_conn_handle = BLE_CONN_HANDLE_INVALID;                   /**< Handle of the current connection. */
-
-static sensorsim_cfg_t   m_speed_kph_sim_cfg;                                       /**< Speed simulator configuration. */
-static sensorsim_state_t m_speed_kph_sim_state;                                     /**< Speed simulator state. */
-static sensorsim_cfg_t   m_crank_rpm_sim_cfg;                                       /**< Crank simulator configuration. */
-static sensorsim_state_t m_crank_rpm_sim_state;                                     /**< Crank simulator state. */
-
-static uint32_t m_cumulative_wheel_revs;                                            /**< Cumulative wheel revolutions. */
-static bool     m_auto_calibration_in_progress;                                     /**< Set when an autocalibration is in progress. */
 
 static ble_sensor_location_t supported_locations[] =                                /**< Supported location for the sensor location. */
 {
@@ -180,6 +171,33 @@ static ble_uuid_t m_adv_uuids[] =                                               
 };
 
 static void advertising_start(bool erase_bonds);
+
+#ifdef CSCS_MOCK_ENABLE
+#include "sensorsim.h"
+
+static sensorsim_cfg_t   m_speed_kph_sim_cfg;                                       /**< Speed simulator configuration. */
+static sensorsim_state_t m_speed_kph_sim_state;                                     /**< Speed simulator state. */
+static sensorsim_cfg_t   m_crank_rpm_sim_cfg;                                       /**< Crank simulator configuration. */
+static sensorsim_state_t m_crank_rpm_sim_state;                                     /**< Crank simulator state. */
+static uint32_t m_cumulative_wheel_revs;                                            /**< Cumulative wheel revolutions. */
+static bool     m_auto_calibration_in_progress;                                     /**< Set when an autocalibration is in progress. */
+
+#define WHEEL_CIRCUMFERENCE_MM          2100                                        /**< Simulated wheel circumference in millimeters. */
+#define KPH_TO_MM_PER_SEC               278                                         /**< Constant to convert kilometers per hour into millimeters per second. */
+
+#define MIN_SPEED_KPH                   10                                          /**< Minimum speed in kilometers per hour for use in the simulated measurement function. */
+#define MAX_SPEED_KPH                   40                                          /**< Maximum speed in kilometers per hour for use in the simulated measurement function. */
+#define SPEED_KPH_INCREMENT             1                                           /**< Value by which speed is incremented/decremented for each call to the simulated measurement function. */
+
+#define DEGREES_PER_REVOLUTION          360                                         /**< Constant used in simulation for calculating crank speed. */
+#define RPM_TO_DEGREES_PER_SEC          6                                           /**< Constant to convert revolutions per minute into degrees per second. */
+
+#define MIN_CRANK_RPM                   20                                          /**< Minimum cadence in RPM for use in the simulated measurement function. */
+#define MAX_CRANK_RPM                   110                                         /**< Maximum cadence in RPM for use in the simulated measurement function. */
+#define CRANK_RPM_INCREMENT             3                                           /**< Value by which cadence is incremented/decremented in the simulated measurement function. */
+
+#endif
+
 
 /**@brief Handler for shutdown preparation.
  *
@@ -278,6 +296,36 @@ static void disconnect(uint16_t conn_handle, void * p_context)
     }
 }
 
+/**@brief Function for handling Speed and Cadence Control point events
+ *
+ * @details Function for handling Speed and Cadence Control point events.
+ *          This function parses the event and in case the "set cumulative value" event is received,
+ *          sets the wheel cumulative value to the received value.
+ */
+ble_scpt_response_t sc_ctrlpt_event_handler(ble_sc_ctrlpt_t     * p_sc_ctrlpt,
+                                            ble_sc_ctrlpt_evt_t * p_evt)
+{
+    switch (p_evt->evt_type)
+    {
+        case BLE_SC_CTRLPT_EVT_SET_CUMUL_VALUE:
+#ifdef CSCS_MOCK_ENABLE
+        	m_cumulative_wheel_revs = p_evt->params.cumulative_value;
+#endif
+            break;
+
+        case BLE_SC_CTRLPT_EVT_START_CALIBRATION:
+#ifdef CSCS_MOCK_ENABLE
+        	m_auto_calibration_in_progress = true;
+#endif
+            break;
+
+        default:
+            // No implementation needed.
+            break;
+    }
+    return (BLE_SCPT_SUCCESS);
+}
+
 // YOUR_JOB: Update this code if you want to do anything given a DFU event (optional).
 /**@brief Function for handling dfu events from the Buttonless Secure DFU service
  *
@@ -366,100 +414,6 @@ static void pm_evt_handler(pm_evt_t const * p_evt)
     }
 }
 
-
-/**@brief Function for populating simulated cycling speed and cadence measurements.
- */
-static void csc_sim_measurement(ble_cscs_meas_t * p_measurement)
-{
-    static uint16_t cumulative_crank_revs = 0;
-    static uint16_t event_time            = 0;
-    static uint16_t wheel_revolution_mm   = 0;
-    static uint16_t crank_rev_degrees     = 0;
-
-    uint16_t mm_per_sec;
-    uint16_t degrees_per_sec;
-    uint16_t event_time_inc;
-
-    // Per specification event time is in 1/1024th's of a second.
-    event_time_inc = (1024 * SPEED_AND_CADENCE_MEAS_INTERVAL) / 1000;
-
-    // Calculate simulated wheel revolution values.
-    p_measurement->is_wheel_rev_data_present = true;
-
-    mm_per_sec = KPH_TO_MM_PER_SEC * sensorsim_measure(&m_speed_kph_sim_state,
-                                                       &m_speed_kph_sim_cfg);
-
-    wheel_revolution_mm     += mm_per_sec * SPEED_AND_CADENCE_MEAS_INTERVAL / 1000;
-    m_cumulative_wheel_revs += wheel_revolution_mm / WHEEL_CIRCUMFERENCE_MM;
-    wheel_revolution_mm     %= WHEEL_CIRCUMFERENCE_MM;
-
-    p_measurement->cumulative_wheel_revs = m_cumulative_wheel_revs;
-    p_measurement->last_wheel_event_time =
-        event_time + (event_time_inc * (mm_per_sec - wheel_revolution_mm) / mm_per_sec);
-
-    // Calculate simulated cadence values.
-    p_measurement->is_crank_rev_data_present = true;
-
-    degrees_per_sec = RPM_TO_DEGREES_PER_SEC * sensorsim_measure(&m_crank_rpm_sim_state,
-                                                                 &m_crank_rpm_sim_cfg);
-
-    crank_rev_degrees     += degrees_per_sec * SPEED_AND_CADENCE_MEAS_INTERVAL / 1000;
-    cumulative_crank_revs += crank_rev_degrees / DEGREES_PER_REVOLUTION;
-    crank_rev_degrees     %= DEGREES_PER_REVOLUTION;
-
-    p_measurement->cumulative_crank_revs = cumulative_crank_revs;
-    p_measurement->last_crank_event_time =
-        event_time + (event_time_inc * (degrees_per_sec - crank_rev_degrees) / degrees_per_sec);
-
-    event_time += event_time_inc;
-}
-
-
-/**@brief Function for handling the Cycling Speed and Cadence measurement timer timeouts.
- *
- * @details This function will be called each time the cycling speed and cadence
- *          measurement timer expires.
- *
- * @param[in] p_context  Pointer used for passing some arbitrary information (context) from the
- *                       app_start_timer() call to the timeout handler.
- */
-static void csc_meas_timeout_handler(void * p_context)
-{
-    uint32_t        err_code;
-    ble_cscs_meas_t cscs_measurement;
-
-    UNUSED_PARAMETER(p_context);
-
-    csc_sim_measurement(&cscs_measurement);
-
-    err_code = ble_cscs_measurement_send(&m_cscs, &cscs_measurement);
-    if ((err_code != NRF_SUCCESS) &&
-        (err_code != NRF_ERROR_INVALID_STATE) &&
-        (err_code != NRF_ERROR_RESOURCES) &&
-        (err_code != NRF_ERROR_BUSY) &&
-        (err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
-       )
-    {
-        APP_ERROR_HANDLER(err_code);
-    }
-    if (m_auto_calibration_in_progress)
-    {
-        err_code = ble_sc_ctrlpt_rsp_send(&(m_cscs.ctrl_pt), BLE_SCPT_SUCCESS);
-        if ((err_code != NRF_SUCCESS) &&
-            (err_code != NRF_ERROR_INVALID_STATE) &&
-            (err_code != NRF_ERROR_RESOURCES)
-           )
-        {
-            APP_ERROR_HANDLER(err_code);
-        }
-        if (err_code != NRF_ERROR_RESOURCES)
-        {
-            m_auto_calibration_in_progress = false;
-        }
-    }
-}
-
-
 /**@brief Function for the Timer initialization.
  *
  * @details Initializes the timer module. This creates and starts application timers.
@@ -541,34 +495,6 @@ static void nrf_qwr_error_handler(uint32_t nrf_error)
     APP_ERROR_HANDLER(nrf_error);
 }
 
-
-/**@brief Function for handling Speed and Cadence Control point events
- *
- * @details Function for handling Speed and Cadence Control point events.
- *          This function parses the event and in case the "set cumulative value" event is received,
- *          sets the wheel cumulative value to the received value.
- */
-ble_scpt_response_t sc_ctrlpt_event_handler(ble_sc_ctrlpt_t     * p_sc_ctrlpt,
-                                            ble_sc_ctrlpt_evt_t * p_evt)
-{
-    switch (p_evt->evt_type)
-    {
-        case BLE_SC_CTRLPT_EVT_SET_CUMUL_VALUE:
-            m_cumulative_wheel_revs = p_evt->params.cumulative_value;
-            break;
-
-        case BLE_SC_CTRLPT_EVT_START_CALIBRATION:
-            m_auto_calibration_in_progress = true;
-            break;
-
-        default:
-            // No implementation needed.
-            break;
-    }
-    return (BLE_SCPT_SUCCESS);
-}
-
-
 /**@brief Function for initializing services that will be used by the application.
  *
  * @details Initialize the Cycling Speed and Cadence, Battery and Device Information services.
@@ -631,29 +557,6 @@ static void services_init(void)
 
     err_code = ble_dis_init(&dis_init);
     APP_ERROR_CHECK(err_code);
-}
-
-
-/**@brief Function for initializing the sensor simulators.
- */
-static void sensor_simulator_init(void)
-{
-    m_speed_kph_sim_cfg.min          = MIN_SPEED_KPH;
-    m_speed_kph_sim_cfg.max          = MAX_SPEED_KPH;
-    m_speed_kph_sim_cfg.incr         = SPEED_KPH_INCREMENT;
-    m_speed_kph_sim_cfg.start_at_max = false;
-
-    sensorsim_init(&m_speed_kph_sim_state, &m_speed_kph_sim_cfg);
-
-    m_crank_rpm_sim_cfg.min          = MIN_CRANK_RPM;
-    m_crank_rpm_sim_cfg.max          = MAX_CRANK_RPM;
-    m_crank_rpm_sim_cfg.incr         = CRANK_RPM_INCREMENT;
-    m_crank_rpm_sim_cfg.start_at_max = false;
-
-    sensorsim_init(&m_crank_rpm_sim_state, &m_crank_rpm_sim_cfg);
-
-    m_cumulative_wheel_revs        = 0;
-    m_auto_calibration_in_progress = false;
 }
 
 /**@brief Function for handling the Connection Parameter events.
@@ -736,8 +639,6 @@ static void wakeup_gpio_init(void)
  */
 static void sleep_mode_enter(void)
 {
-	wakeup_gpio_init();
-
     ret_code_t err_code = bsp_indication_set(BSP_INDICATE_IDLE);
     APP_ERROR_CHECK(err_code);
 
@@ -746,8 +647,6 @@ static void sleep_mode_enter(void)
 
     // Go to system-off mode (this function will not return; wakeup will cause a reset).
     err_code = sd_power_system_off();
-    if(err_code)
-    	NRF_LOG_ERROR("sd_power_system_off error");
     APP_ERROR_CHECK(err_code);
 }
 
@@ -890,7 +789,6 @@ void bsp_event_handler(bsp_event_t event)
                                              BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
             if (err_code != NRF_ERROR_INVALID_STATE)
             {
-                NRF_LOG_ERROR("BSP_EVENT_DISCONNECT error");
                 APP_ERROR_CHECK(err_code);
             }
             break;
@@ -901,7 +799,6 @@ void bsp_event_handler(bsp_event_t event)
                 err_code = ble_advertising_restart_without_whitelist(&m_advertising);
                 if (err_code != NRF_ERROR_INVALID_STATE)
                 {
-                	NRF_LOG_ERROR("BSP_EVENT_WHITELIST_OFF error");
                     APP_ERROR_CHECK(err_code);
                 }
             }
@@ -990,7 +887,8 @@ static void advertising_init(void)
  */
 static void power_management_init(void)
 {
-    ret_code_t err_code = nrf_pwr_mgmt_init();
+    ret_code_t err_code;
+    err_code = nrf_pwr_mgmt_init();
     APP_ERROR_CHECK(err_code);
 }
 
@@ -1010,46 +908,6 @@ static void advertising_start(bool erase_bonds)
     {
         err_code = ble_advertising_start(&m_advertising, BLE_ADV_MODE_FAST);
         APP_ERROR_CHECK(err_code);
-    }
-}
-
-/**@brief Function for handling the Cycling Speed and Cadence measurement and pushing to the air.
- *
- * @param[in] p_context  Pointer used for passing some arbitrary information (context) from the
- *                       app_start_timer() call to the timeout handler.
- */
-void csc_meas_handler(ble_cscs_meas_t cscs_measurement)
-{
-    uint32_t        err_code;
-
-    if (ble_connection_status()==false) // not connected
-    	return;
-
-    err_code = ble_cscs_measurement_send(&m_cscs, &cscs_measurement);
-    if ((err_code != NRF_SUCCESS) &&
-        (err_code != NRF_ERROR_INVALID_STATE) &&
-        (err_code != NRF_ERROR_RESOURCES) &&
-        (err_code != NRF_ERROR_BUSY) &&
-        (err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
-       )
-    {
-        APP_ERROR_HANDLER(err_code);
-    }
-    if (m_auto_calibration_in_progress)
-    {
-        err_code = ble_sc_ctrlpt_rsp_send(&(m_cscs.ctrl_pt), BLE_SCPT_SUCCESS);
-        if ((err_code != NRF_SUCCESS) &&
-            (err_code != NRF_ERROR_INVALID_STATE) &&
-            (err_code != NRF_ERROR_RESOURCES)
-           )
-        {
-        	NRF_LOG_ERROR("ble_sc_ctrlpt_rsp_send error");
-            APP_ERROR_HANDLER(err_code);
-        }
-        if (err_code != NRF_ERROR_RESOURCES)
-        {
-            m_auto_calibration_in_progress = false;
-        }
     }
 }
 
@@ -1080,7 +938,9 @@ void ble_init(void)
     gatt_init();
     advertising_init();
     services_init();
-    //sensor_simulator_init();
+#ifdef CSCS_MOCK_ENABLE
+	sensor_simulator_init();
+#endif
     conn_params_init();
     peer_manager_init();
 
@@ -1098,6 +958,108 @@ void ble_advertising_entry(void)
 	// Start execution.
 	NRF_LOG_INFO("ble advertising.");
 	advertising_start(erase_bonds);
+}
+
+
+#ifdef CSCS_MOCK_ENABLE
+/**@brief Function for populating simulated cycling speed and cadence measurements.
+ */
+void csc_sim_measurement(ble_cscs_meas_t * p_measurement)
+{
+    static uint16_t cumulative_crank_revs = 0;
+    static uint16_t event_time            = 0;
+    static uint16_t wheel_revolution_mm   = 0;
+    static uint16_t crank_rev_degrees     = 0;
+
+    uint16_t mm_per_sec;
+    uint16_t degrees_per_sec;
+    uint16_t event_time_inc;
+
+    // Per specification event time is in 1/1024th's of a second.
+    event_time_inc = (1024 * SPEED_AND_CADENCE_MEAS_INTERVAL) / 1000;
+
+    // Calculate simulated wheel revolution values.
+    p_measurement->is_wheel_rev_data_present = true;
+
+    mm_per_sec = KPH_TO_MM_PER_SEC * sensorsim_measure(&m_speed_kph_sim_state,
+                                                       &m_speed_kph_sim_cfg);
+
+    wheel_revolution_mm     += mm_per_sec * SPEED_AND_CADENCE_MEAS_INTERVAL / 1000;
+    m_cumulative_wheel_revs += wheel_revolution_mm / WHEEL_CIRCUMFERENCE_MM;
+    wheel_revolution_mm     %= WHEEL_CIRCUMFERENCE_MM;
+
+    p_measurement->cumulative_wheel_revs = m_cumulative_wheel_revs;
+    p_measurement->last_wheel_event_time =
+        event_time + (event_time_inc * (mm_per_sec - wheel_revolution_mm) / mm_per_sec);
+
+    // Calculate simulated cadence values.
+    p_measurement->is_crank_rev_data_present = true;
+
+    degrees_per_sec = RPM_TO_DEGREES_PER_SEC * sensorsim_measure(&m_crank_rpm_sim_state,
+                                                                 &m_crank_rpm_sim_cfg);
+
+    crank_rev_degrees     += degrees_per_sec * SPEED_AND_CADENCE_MEAS_INTERVAL / 1000;
+    cumulative_crank_revs += crank_rev_degrees / DEGREES_PER_REVOLUTION;
+    crank_rev_degrees     %= DEGREES_PER_REVOLUTION;
+
+    p_measurement->cumulative_crank_revs = cumulative_crank_revs;
+    p_measurement->last_crank_event_time =
+        event_time + (event_time_inc * (degrees_per_sec - crank_rev_degrees) / degrees_per_sec);
+
+    event_time += event_time_inc;
+}
+
+/**@brief Function for initializing the sensor simulators.
+ */
+void sensor_simulator_init(void)
+{
+    m_speed_kph_sim_cfg.min          = MIN_SPEED_KPH;
+    m_speed_kph_sim_cfg.max          = MAX_SPEED_KPH;
+    m_speed_kph_sim_cfg.incr         = SPEED_KPH_INCREMENT;
+    m_speed_kph_sim_cfg.start_at_max = false;
+
+    sensorsim_init(&m_speed_kph_sim_state, &m_speed_kph_sim_cfg);
+
+    m_crank_rpm_sim_cfg.min          = MIN_CRANK_RPM;
+    m_crank_rpm_sim_cfg.max          = MAX_CRANK_RPM;
+    m_crank_rpm_sim_cfg.incr         = CRANK_RPM_INCREMENT;
+    m_crank_rpm_sim_cfg.start_at_max = false;
+
+    sensorsim_init(&m_crank_rpm_sim_state, &m_crank_rpm_sim_cfg);
+
+    m_cumulative_wheel_revs        = 0;
+    m_auto_calibration_in_progress = false;
+}
+#endif // CSCS_MOCK_ENABLE
+
+
+/**@brief Function accel_csc_meas_timeout_handler.
+ */
+void accel_csc_meas_timeout_handler(void * p_context)
+{
+    uint32_t        err_code;
+    ble_cscs_meas_t cscs_measurement;
+
+    NRF_LOG_INFO("accel_csc_meas_timeout_handler");
+    if (ble_connection_status())
+    {
+		UNUSED_PARAMETER(p_context);
+#ifdef CSCS_MOCK_ENABLE
+		csc_sim_measurement(&cscs_measurement);
+#else
+		accel_csc_measurement(&cscs_measurement);
+#endif
+		err_code = ble_cscs_measurement_send(&m_cscs, &cscs_measurement);
+		if ((err_code != NRF_SUCCESS) &&
+			(err_code != NRF_ERROR_INVALID_STATE) &&
+			(err_code != NRF_ERROR_RESOURCES) &&
+			(err_code != NRF_ERROR_BUSY) &&
+			(err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
+		   )
+		{
+			APP_ERROR_HANDLER(err_code);
+		}
+    }
 }
 
 /**

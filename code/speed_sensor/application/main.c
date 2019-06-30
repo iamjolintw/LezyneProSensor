@@ -65,6 +65,10 @@ static void idle_state_handle(void)
  */
 static void gpio_model_init(void)
 {
+	// disable interrupt of GPIO to avoid the case of wakeup from sleep by GPIO event and trigger the interrupt before done the initialize procedure.
+	NVIC_DisableIRQ(GPIOTE_IRQn);
+
+	// Initialize.
     ret_code_t err_code = nrf_drv_gpiote_init();
     APP_ERROR_CHECK(err_code);
 }
@@ -84,7 +88,7 @@ int main(void)
 	gpio_model_init();
 
 	// Accelerometer Initialize.
-	//accel_init();
+	accel_init();
 
 	// BLE advertising.
 	ble_advertising_entry();

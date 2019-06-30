@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include "mma8652_regs.h"
 #include "sys_conf.h"
+#include "ble_cscs.h"
 
 /* DEFINITION */
 #define MMA8652_ADDRESS 			0x1D
@@ -98,5 +99,6 @@ void 	accel_set_active(void);
 void 	accel_weak_up(void);
 void 	accel_standby(void);
 void 	accel_calibration (void);
+void 	accel_csc_measurement(ble_cscs_meas_t * p_measurement);
 
 #endif /* SENSOR_ACCELEROMETER_H_ */

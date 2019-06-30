@@ -15,11 +15,12 @@
 #include "sensor_accelerometer.h"
 #include "ble_core.h"
 
-#include "ble_cscs.h"
 #include "nrf_drv_twi.h"
 #include "app_error.h"
 #include "app_timer.h"
 #include "nrf_delay.h"
+#include "ble_cscs.h"
+#include "sensorsim.h"
 
 #include "nrf_gpiote.h"
 #include "nrf_gpio.h"
@@ -29,15 +30,16 @@
 #include "nrf_log_ctrl.h"
 #include "nrf_log_default_backends.h"
 
+/* Configuration */
+#define SENSOR_DEBUG_OUTPUT
+
+APP_TIMER_DEF(m_csc_meas_timer_id);
+
 /* I2C configuration */
 static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(MMA8652_TWI_INSTANCE_ID);
 
-
 /* defination of ratio of the circumference of a circle to its diameter*/
 #define PI 3.14159265
-
-/* Configuration */
-#define SENSOR_DEBUG_OUTPUT
 
 /* Data rate 20ms = 50Hz, the highest bicycle speed =75 Km/h = 20.83 m/s, 
    max RPM = 20.83 / 2m (circomference) = 10.41 Hz but need a least 4 samples to calculate = 41.64 Hz ~= 50Hz  */ 
@@ -56,8 +58,7 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(MMA8652_TWI_INSTANC
 #define  DEF_WATERMARK_VAL 25
 
 #define  SENSOR_8BIT_DATA_OUTPUT_SUPPORT
-
-APP_TIMER_DEF(m_csc_meas_timer_id);                                                 /**< CSC measurement timer. */
+                                               /**< CSC measurement timer. */
 #ifdef SENSOR_8BIT_DATA_OUTPUT_SUPPORT
 	/* 8bit xyz fifo data */
 	static uint8_t accel_buff[3*DEF_WATERMARK_VAL];
@@ -69,23 +70,12 @@ APP_TIMER_DEF(m_csc_meas_timer_id);                                             
 /* acc_step_update_angle variable */
 static t_angle_step angle_step ={0};
 
-#if 0
-static sensorsim_cfg_t   m_speed_kph_sim_cfg;                                       /**< Speed simulator configuration. */
-static sensorsim_state_t m_speed_kph_sim_state;                                     /**< Speed simulator state. */
-static sensorsim_cfg_t   m_crank_rpm_sim_cfg;                                       /**< Crank simulator configuration. */
-static sensorsim_state_t m_crank_rpm_sim_state;                                     /**< Crank simulator state. */
-
-static uint32_t m_cumulative_wheel_revs;                                            /**< Cumulative wheel revolutions. */
-static bool     m_auto_calibration_in_progress;                                     /**< Set when an autocalibration is in progress. */
-#endif
-
 /* FUNCTIONS */
 static void acc_step_update_angle(float x, float y);
 static void acc_step_reset_angle(void);
 static void application_timers_start(void);
 static void application_timers_stop(void);
 static void acc_read_fifodata(void);
-static void accel_csc_measurement(ble_cscs_meas_t * p_measurement);
 static ret_code_t accel_write_reg(uint8_t reg_addr, uint8_t reg_data);
 static ret_code_t accel_read_reg(uint8_t reg_addr, uint8_t *reg_data);
 static ret_code_t accel_burst_read_reg(uint8_t addr, uint8_t * pdata, size_t size);
@@ -119,33 +109,6 @@ void mma8652_int2_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action
 	}
 }
 
-/**@brief Function accel_csc_meas_timeout_handler.
- */
-static void accel_csc_meas_timeout_handler(void * p_context)
-{
-    uint32_t        err_code;
-    ble_cscs_meas_t cscs_measurement;
-
-    NRF_LOG_INFO("accel_csc_meas_timeout_handler");
-    if (ble_connection_status())
-    {
-		UNUSED_PARAMETER(p_context);
-
-		accel_csc_measurement(&cscs_measurement);
-
-		err_code = ble_cscs_measurement_send(&m_cscs, &cscs_measurement);
-		if ((err_code != NRF_SUCCESS) &&
-			(err_code != NRF_ERROR_INVALID_STATE) &&
-			(err_code != NRF_ERROR_RESOURCES) &&
-			(err_code != NRF_ERROR_BUSY) &&
-			(err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
-		   )
-		{
-			APP_ERROR_HANDLER(err_code);
-		}
-    }
-}
-
 /**@brief Function for the Timer initialization.
  *
  * @details Initializes the timer module. This creates and starts application timers.
@@ -170,7 +133,6 @@ static void application_timers_start(void)
 
     // Start application timers.
     csc_meas_timer_ticks = APP_TIMER_TICKS(SPEED_AND_CADENCE_MEAS_INTERVAL);
-    NRF_LOG_INFO("csc_meas_timer_ticks = %d.",csc_meas_timer_ticks);
 
     err_code = app_timer_start(m_csc_meas_timer_id, csc_meas_timer_ticks, NULL);
     APP_ERROR_CHECK(err_code);
@@ -427,9 +389,17 @@ static ret_code_t accel_i2c_gpio_init (void)
     /* GPIO Initialize */
     nrf_drv_gpiote_in_config_t in_config = GPIOTE_CONFIG_IN_SENSE_TOGGLE(true);
     in_config.pull = NRF_GPIO_PIN_PULLUP;
-    err_code += nrf_drv_gpiote_in_init(MMA8652_INT1_PIN, &in_config, mma8652_int1_handler);
-    err_code += nrf_drv_gpiote_in_init(MMA8652_INT2_PIN, &in_config, mma8652_int2_handler);
+    //err_code = nrf_drv_gpiote_in_init(MMA8652_INT1_PIN, &in_config, mma8652_int1_handler);
+    err_code = nrf_drv_gpiote_in_init(MMA8652_INT2_PIN, &in_config, mma8652_int2_handler);
     APP_ERROR_CHECK(err_code);
+
+    /* GPIO Initialize as system wakeup pin */
+    nrf_drv_gpiote_in_config_t in_config_1 = GPIOTE_CONFIG_IN_SENSE_HITOLO(false);
+    in_config_1.pull = NRF_GPIO_PIN_PULLUP;
+	err_code = nrf_drv_gpiote_in_init(MMA8652_INT1_PIN, &in_config_1, mma8652_int1_handler);
+	APP_ERROR_CHECK(err_code);
+	nrf_drv_gpiote_in_event_enable(MMA8652_INT1_PIN, true);
+	NVIC_EnableIRQ(GPIOTE_IRQn);
 
 	return err_code;
 }
@@ -620,11 +590,6 @@ void accel_calibration (void)
 	accel_set_active(); // Active mode again
 }
 
-/**@brief Function for populating simulated cycling speed and cadence measurements.
- */
-static void accel_csc_measurement(ble_cscs_meas_t * p_measurement)
-{
-}
 
 #if 0
 /**@brief Function for populating simulated cycling speed and cadence measurements.
@@ -698,6 +663,11 @@ typedef struct ble_cscs_meas_s
 } ble_cscs_meas_t;
 #endif
 
+/**@brief Function for populating simulated cycling speed and cadence measurements.
+ */
+void accel_csc_measurement(ble_cscs_meas_t * p_measurement)
+{
+}
 
 /**@brief Function initialize function.
  */
@@ -709,7 +679,7 @@ void accel_init(void)
 	accel_i2c_gpio_init();
 
 	/* configuration */
-	accel_configuration();
+	//accel_configuration();
 
 	/* timer init */
 	accel_timers_init();
