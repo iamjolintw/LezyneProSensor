@@ -112,8 +112,6 @@
 #define MAX_BATTERY_LEVEL               100                                         /**< Maximum battery level as returned by the simulated measurement function. */
 #define BATTERY_LEVEL_INCREMENT         1                                           /**< Value by which the battery level is incremented/decremented for each call to the simulated measurement function. */
 
-#define SPEED_AND_CADENCE_MEAS_INTERVAL 1000                                        /**< Speed and cadence measurement interval (milliseconds). */
-
 #define WHEEL_CIRCUMFERENCE_MM          2100                                        /**< Simulated wheel circumference in millimeters. */
 #define KPH_TO_MM_PER_SEC               278                                         /**< Constant to convert kilometers per hour into millimeters per second. */
 

@@ -55,6 +55,15 @@ static void log_init(void)
  */
 static void idle_state_handle(void)
 {
+	if(accel_task_check_enable(SENSOR_TASK_INT_FIFO))
+	{
+		acc_read_fifodata();
+		accel_task_disable_mask(SENSOR_TASK_INT_FIFO);
+	}
+	else if(accel_task_check_enable(SENSOR_TASK_INT_DRDY))
+	{
+
+	}
     if (NRF_LOG_PROCESS() == false)
     {
         nrf_pwr_mgmt_run();

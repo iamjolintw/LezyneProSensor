@@ -12,6 +12,8 @@
 #include <stdbool.h>
 #include "mma8652_regs.h"
 #include "sys_conf.h"
+#include "nrf_error.h"
+#include "nrf_log.h"
 #include "ble_cscs.h"
 
 /* DEFINITION */
@@ -51,6 +53,14 @@ typedef enum{
 
 }step_detect_t;
 
+/* pending Task event */
+typedef enum {
+	SENSOR_TASK_INT_FIFO = 0x01,
+	SENSOR_TASK_INT_DRDY = 0x02,
+	SENSOR_TASK_INT_MTDT = 0x03,
+	SENSOR_TASK_MAX = 0xFF
+}t_accel_task_pending;
+
 #if 0
 typedef struct {
 	uint32_t 		sample;
@@ -77,13 +87,19 @@ typedef struct {
 #define DEF_SAMPLE_4TH       	3
 #define DEF_SAMPLE_5TH       	4
 
-#define DEF_MAX_ANGLE_WINDOW    75.0f  // 75 degree equal 75Km/hr in 50 hz ODR
-
+#define DEF_MAX_ANGLE_WINDOW    85  // 75 +10 degree equal 85Km/hr in 50 hz ODR
+#define DEF_ANGLE_180_DEGREE    180  //
+#define DEF_ANGLE_360_DEGREE    360  //
+/* defination a invalid angle for first time calculate lap*/
+#define DEF_INVALID_LAST_ANGLE 	-999	//
+/* defination of ratio of the circumference of a circle to its diameter*/
+#define PI 3.14159265
 
 typedef struct {
 	uint32_t 		ui32_sample;
     float 			f_raw_x[DEF_SAMPLE_TO_AVG];
     float 			f_raw_y[DEF_SAMPLE_TO_AVG];
+    float 			f_raw_z[DEF_SAMPLE_TO_AVG];
     uint32_t 		ui32_rawidx;
     float 			f_average_ang;
     float 			f_min, f_tempmin;
@@ -94,11 +110,15 @@ typedef struct {
 extern uint32_t steps;
 
 /* FUNCTIONS */
-void 	accel_init(void);
-void 	accel_set_active(void);
-void 	accel_weak_up(void);
-void 	accel_standby(void);
-void 	accel_calibration (void);
-void 	accel_csc_measurement(ble_cscs_meas_t * p_measurement);
+void 		accel_init(void);
+void 		accel_set_active(void);
+void 		accel_set_deactive(void);
+void 		accel_calibration (void);
+void 		accel_task_disable_mask(t_accel_task_pending disable);
+bool 		accel_task_check_enable(t_accel_task_pending check);
+ret_code_t 	accel_task_enable_mask(t_accel_task_pending enable);
+void 		acc_read_fifodata(void);
+void 		acc_step_reset_angle(void);
+void 		accel_csc_measurement(ble_cscs_meas_t * p_measurement);
 
 #endif /* SENSOR_ACCELEROMETER_H_ */
