@@ -41,6 +41,8 @@
 /* Speed and cadence measurement interval (milliseconds). */
 #define SPEED_AND_CADENCE_MEAS_INTERVAL 		2000
 
+#define WHEEL_CIRCUMFERENCE_MM          2100                                        /**< Simulated wheel circumference in millimeters. */
+
 #define SPEED_SENSOR_LOCATION			BLE_SENSOR_LOCATION_FRONT_WHEEL				/**< the location of sensor. options:
 																						BLE_SENSOR_LOCATION_FRONT_WHEEL,
 																						BLE_SENSOR_LOCATION_LEFT_CRANK,

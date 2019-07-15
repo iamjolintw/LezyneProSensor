@@ -95,6 +95,8 @@ typedef struct {
 /* defination of ratio of the circumference of a circle to its diameter*/
 #define PI 3.14159265
 
+#define ANGLE_SPEED_TO_METER_PER_HOUR ((WHEEL_CIRCUMFERENCE_MM * 3600)/(DEF_ANGLE_360_DEGREE * SPEED_AND_CADENCE_MEAS_INTERVAL))
+
 typedef struct {
 	uint32_t 		ui32_sample;
     float 			f_raw_x[DEF_SAMPLE_TO_AVG];

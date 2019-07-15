@@ -613,34 +613,19 @@ static void conn_params_init(void)
     APP_ERROR_CHECK(err_code);
 }
 
-/**
- * @brief Function for preparing the wakeup source:,
- * MMA8652_INT1_PIN pin (accelerometer: motion detection) to wake up from System-off
- */
-static void wakeup_gpio_init(void)
-{
-    ret_code_t err_code;
-
-    //Configure wake-up button
-    nrf_drv_gpiote_in_config_t in_config = GPIOTE_CONFIG_IN_SENSE_HITOLO(false);     	//Configure to generate interrupt and wakeup on pin signal low. "false" means that gpiote will use the PORT event, which is low power, i.e. does not add any noticable current consumption (<<1uA). Setting this to "true" will make the gpiote module use GPIOTE->IN events which add ~8uA for nRF52 and ~1mA for nRF51.
-    in_config.pull = NRF_GPIO_PIN_PULLUP;                                            	//Configure pullup for input pin to prevent it from floting. Pin is pulled down when button is pressed on nRF5x-DK boards, see figure two in http://infocenter.nordicsemi.com/topic/com.nordic.infocenter.nrf52/dita/nrf52/development/dev_kit_v1.1.0/hw_btns_leds.html?cp=2_0_0_1_4
-    err_code = nrf_drv_gpiote_in_init(MMA8652_INT1_PIN, &in_config, NULL);           	//Initialize the wake-up pin
-    APP_ERROR_CHECK(err_code);		                                                    //Check error code returned
-
-    nrf_drv_gpiote_in_event_enable(MMA8652_INT1_PIN, true);
-    NVIC_EnableIRQ(GPIOTE_IRQn);                         								//Enable event and interrupt for the wakeup pin
-}
-
 /**@brief Function for putting the chip into sleep mode.
  *
  * @note This function will not return.
  */
 static void sleep_mode_enter(void)
 {
+	// deactivate accelerometer
+	accel_set_deactive();
+
     ret_code_t err_code = bsp_indication_set(BSP_INDICATE_IDLE);
     APP_ERROR_CHECK(err_code);
 
-	NRF_LOG_INFO("sleep_mode_enter go");
+	NRF_LOG_INFO("\n\n>>>>>>>>> sleep_mode_enter go! <<<<<<<<<<\n\n");
 	nrf_delay_ms(1000);
 
     // Go to system-off mode (this function will not return; wakeup will cause a reset).
@@ -700,11 +685,15 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             m_conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
             err_code = nrf_ble_qwr_conn_handle_assign(&m_qwr, m_conn_handle);
             APP_ERROR_CHECK(err_code);
+            /* activate accelerometer */
+            accel_set_active();
             break;
 
         case BLE_GAP_EVT_DISCONNECTED:
             NRF_LOG_INFO("Disconnected");
             m_conn_handle = BLE_CONN_HANDLE_INVALID;
+            /* deactivate accelerometer */
+            accel_set_deactive();
             break;
 
         case BLE_GAP_EVT_PHY_UPDATE_REQUEST:
@@ -1038,7 +1027,6 @@ void accel_csc_meas_timeout_handler(void * p_context)
     uint32_t        err_code;
     ble_cscs_meas_t cscs_measurement;
 
-    NRF_LOG_INFO("accel_csc_meas_timeout_handler");
     if (ble_connection_status())
     {
 		UNUSED_PARAMETER(p_context);

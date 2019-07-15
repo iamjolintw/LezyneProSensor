@@ -34,10 +34,11 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(MMA8652_TWI_INSTANC
 
 /* Configuration */
 #define SENSOR_DEBUG_OUTPUT
+//#define ACCELEROMETER_SELF_ACTIVATE
 
 /* Data rate 20ms = 50Hz, the highest bicycle speed =75 Km/h = 20.83 m/s, 
    max RPM = 20.83 / 2m (circomference) = 10.41 Hz but need a least 4 samples to calculate = 41.64 Hz ~= 50Hz  */ 
-#define ACCEL_DATARATE  						DATA_RATE_80MS  //DATA_RATE_20MS
+#define ACCEL_DATARATE  						DATA_RATE_20MS
 /* ASLP_RATE_160MS = 6.25 hz */
 #define ACCEL_SLEEPP_DATARATE					ASLP_RATE_160MS
 /* Threshold =0x08; The step count is 0.063g/ count,  (0.5g/0.063g = 7.9); */
@@ -60,7 +61,7 @@ static uint8_t accel_buff[6*DEF_WATERMARK_VAL];
 static t_accel_task_pending task_pending_singal ={0};
 static int16_t last_angle_residue	= DEF_INVALID_LAST_ANGLE;
 static uint32_t ui32_total_lap=0;
-static uint32_t total_angle= 0;
+static uint32_t ui32_total_angle= 0;
 
 
 /* FUNCTIONS */
@@ -77,7 +78,31 @@ static void 	accel_config_fifo_int(bool enable);
 static void 	accel_config_motion_int(bool enable);
 static void 	accel_weak_up(void);
 static void 	accel_standby(void);
+static float 	lowPassExponential(float input, float average);
 
+/**@brief handler for interrupt of input pin1, for Motion Detection and Auto-WAKE/SLEEP event
+ */
+void mma8652_int1_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
+{
+
+	uint8_t ui8_int_source = 0;
+	uint8_t ui8_status = 0, ui8_sysmod = 0, ff_mt_src = 0;
+    uint32_t pin1_status=0;
+    pin1_status = nrf_gpio_pin_read(MMA8652_INT1_PIN);
+
+	/* Check System mode first*/
+	accel_read_reg(MMA8652_INT_SOURCE,		&ui8_int_source);
+	accel_read_reg(MMA8652_STATUS_00,		&ui8_status);
+	accel_read_reg(MMA8652_SYSMOD, 			&ui8_sysmod);
+	NRF_LOG_INFO("mma8652_int1_handler STATUS:%2x, INT: %2x, SYSMOD:%2x, gpio1: %d", ui8_status, ui8_int_source, ui8_sysmod, pin1_status);
+
+	// motion detection interrupt
+	if (ui8_int_source & SRC_FF_MT_MASK)
+	{
+		accel_read_reg(MMA8652_FF_MT_SRC,		&ff_mt_src);
+		NRF_LOG_INFO("MMA8652_FF_MT_SRC: %x ",ff_mt_src );
+	}
+}
 /**@brief handler for interrupt of input pin2 for FIFO interrupt
  */
 void mma8652_int2_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
@@ -85,17 +110,18 @@ void mma8652_int2_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action
 	uint8_t ui8_int_source = 0;
 	uint8_t ui8_status = 0, ui8_sysmod = 0;
 	ret_code_t result;
+	uint32_t pin1_status=0;
+	pin1_status = nrf_gpio_pin_read(MMA8652_INT1_PIN);
 
 	accel_read_reg(MMA8652_INT_SOURCE,		&ui8_int_source);
 	accel_read_reg(MMA8652_STATUS_00,		&ui8_status);
 	accel_read_reg(MMA8652_SYSMOD, 			&ui8_sysmod);
-	NRF_LOG_INFO("mma8652_int2_handler STATUS:%2x, INT: %2x, SYSMOD:%2x",ui8_status, ui8_int_source, ui8_sysmod);
-	//NRF_LOG_INFO("mma8652_int2_handler.");
+	NRF_LOG_INFO("mma8652_int2_handler STATUS:%2x, INT: %2x, SYSMOD:%2x, gpio1:%d",ui8_status, ui8_int_source, ui8_sysmod, pin1_status);
 
 	// FIFO Interrupt enabled
     if (ui8_int_source & SRC_FIFO_MASK)
 	{
-    	NRF_LOG_INFO("mma8652_int2_handler. FIFO Handle");
+    	//NRF_LOG_INFO("mma8652_int2_handler. FIFO Handle");
 
     	// watermark not full, wait until watermark is full
     	if((ui8_status & (F_WMRK_FLAG_MASK)) != (F_WMRK_FLAG_MASK))
@@ -117,63 +143,28 @@ void mma8652_int2_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action
 		NRF_LOG_INFO("mma8652_int2_handler. Data Ready Handle");
 	    accel_task_enable_mask(SENSOR_TASK_INT_DRDY);
 	}
-}
-
-/**@brief handler for interrupt of input pin1, for Motion Detection and Auto-WAKE/SLEEP event
- */
-void mma8652_int1_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
-{
-	uint8_t ui8_int_source = 0;
-	uint8_t ui8_status = 0, ui8_sysmod = 0, ff_mt_src = 0;
-	//ret_code_t result;
-
-	/* Check System mode first*/
-	accel_read_reg(MMA8652_INT_SOURCE,		&ui8_int_source);
-	accel_read_reg(MMA8652_STATUS_00,		&ui8_status);
-	accel_read_reg(MMA8652_SYSMOD, 			&ui8_sysmod);
-	NRF_LOG_INFO("mma8652_int1_handler STATUS:%2x, INT: %2x, SYSMOD:%2x", ui8_status, ui8_int_source, ui8_sysmod);
-
-	// motion detection interrupt
-	if (ui8_int_source & SRC_FF_MT_MASK)
-	{
-		NRF_LOG_INFO("FF MT Detection INT:");
-		accel_read_reg(MMA8652_FF_MT_SRC,		&ff_mt_src);
-		NRF_LOG_INFO("MMA8652_FF_MT_SRC: %x ",ff_mt_src );
-
-	}
+#ifdef ACCELEROMETER_SELF_ACTIVATE
 	// Auto-WAKE/SLEEP interrupt
 	if(ui8_int_source & SRC_ASLP_MASK)
 	{
-		NRF_LOG_INFO("Auto-WAKE/SLEEP detection: SYSMOD: %x",ui8_sysmod);
+		accel_set_active();
+#if 0
 		if ((ui8_sysmod & SYSMOD_WAKE) == SYSMOD_WAKE)
 		{
-			/* sleep -> wake up*/
-			/* Set to standby mode*/
-		    accel_standby();
-
-			accel_config_fifo_int(true);
-			accel_config_motion_int(false);
-			NRF_LOG_INFO("enable FIFO, disable motion detection")
-			/* after wake up, start timer to send cscs information to ble*/
-			//application_timers_stop();
-			// Set back to active
-			accel_weak_up();
+		    accel_set_active();
+			NRF_LOG_INFO("Auto-WAKE/SLEEP detection: SYSMOD:1, enable FIFO, disable motion detection")
 		}
 		else if((ui8_sysmod & SYSMOD_SLEEP) == SYSMOD_SLEEP)
 		{
-			/* wake up -> sleep,*/
-			/* Set to standby mode*/
-		    accel_standby();
-			accel_config_fifo_int(false);
-			accel_config_motion_int(true);
-			NRF_LOG_INFO("disable FIFO, enable motion detection")
-			/* after sleep, stop timer to send cscs information to ble*/
-			//application_timers_stop();
-			// Set back to active
-			accel_weak_up();
+		    accel_set_deactive();
+		    NRF_LOG_INFO("Auto-WAKE/SLEEP detection: SYSMOD:2, diable FIFO, enable motion detection")
 		}
+#endif
 	}
+#endif
 }
+
+
 
 /**@brief Function accel_csc_meas_timeout_handler.
  *  self test timeout handler, should remove this function after official release
@@ -185,17 +176,28 @@ static void accel_self_csc_meas_timeout_handler(void * p_context)
 
     //NRF_LOG_INFO("accel_csc_meas_timeout_handler");
 #if 1   // only for test!!!
+	static uint16_t sleep_counter_test =0;
     uint8_t ctrl_reg[4];
+
     accel_read_reg(MMA8652_SYSMOD, 			&ctrl_reg[2]);
     accel_read_reg(MMA8652_INT_SOURCE,		&ctrl_reg[0]);
     accel_read_reg(MMA8652_STATUS_00,		&ctrl_reg[1]);
     accel_read_reg(MMA8652_CTRL_REG4,		&ctrl_reg[3]);
-   	NRF_LOG_INFO("timeout_handler: sysmode: %2x, INT: %2x, STATUS: %2x, REG4: %2x.", ctrl_reg[2], ctrl_reg[0],ctrl_reg[1],ctrl_reg[3]);
+
+   	NRF_LOG_INFO("self timeout_handler: sysmode: %2x, INT: %2x, STATUS: %2x, sleep_c: %d", ctrl_reg[2], ctrl_reg[0],ctrl_reg[1], sleep_counter_test);
+
+
    	{
    		ble_cscs_meas_t accel_measuremen;
 		accel_csc_measurement(&accel_measuremen);
    	}
 
+   	if(sleep_counter_test > 26)
+   	{
+   		accel_set_deactive();
+   		sleep_counter_test = 0;
+   	}
+   	sleep_counter_test ++;
 
 #else
     if (ble_connection_status())
@@ -229,8 +231,11 @@ static void accel_timers_init(void)
     // Create cycle speed and condence timer.
     err_code = app_timer_create(&m_csc_meas_timer_id,
                                 APP_TIMER_MODE_REPEATED,
-								//accel_csc_meas_timeout_handler);		// timeout handler in ble_core.c
+#ifdef ACCELEROMETER_SELF_ACTIVATE
 								accel_self_csc_meas_timeout_handler);  // selftest print log
+#else
+    							accel_csc_meas_timeout_handler);		// timeout handler in ble_core.c
+#endif
     APP_ERROR_CHECK(err_code);
 }
 
@@ -381,7 +386,9 @@ static void accel_configuration(void)
 {
 	NRF_LOG_INFO("accel_configuration.");
 
-	uint8_t who_n_i;
+	uint8_t who_n_i = 0;
+	uint8_t reset_status = 0;
+
 	/* read WHO_AND_I first */
 	accel_read_reg(MMA8652_WHO_AM_I, &who_n_i);
 	if(who_n_i != MMA8652_WHO_AM_I_OUT )
@@ -392,10 +399,20 @@ static void accel_configuration(void)
 
     /* RESET sensor, all registers are reset to default */
     accel_write_reg(MMA8652_CTRL_REG2, RST_MASK);
-    nrf_delay_ms(100);
+    do {
+    	nrf_delay_ms(5);
+    	accel_read_reg(MMA8652_CTRL_REG2, &reset_status);
+    } while (reset_status & RST_MASK);
 
 	/* Set to standby mode*/
     accel_standby();
+
+    /* clear interrupt in case there were something vestigial */
+    uint8_t ui8_temp = 0;
+	accel_read_reg(MMA8652_INT_SOURCE,		&ui8_temp);
+	accel_read_reg(MMA8652_STATUS_00,		&ui8_temp);
+	accel_read_reg(MMA8652_SYSMOD, 			&ui8_temp);
+	accel_read_reg(MMA8652_FF_MT_SRC,		&ui8_temp);
 
 
 #if 0 // for test
@@ -422,20 +439,30 @@ static void accel_configuration(void)
 	//accel_write_reg(MMA8652_ASLP_COUNT, 0x40 );
 	accel_write_reg(MMA8652_ASLP_COUNT, 0x0A );
 #else
+
+#if 1
     /* Set F_SETUP, disable FIFO first , watermark = 25 * DATA_RATE_20MS = 500ms) */
     accel_write_reg(MMA8652_F_SETUP, DEF_WATERMARK_VAL);
-    
-	/* Set REG2, enable Auto-SLEEP enable and High Resolution */
+	//accel_write_reg(MMA8652_F_SETUP, F_MODE_FILL|DEF_WATERMARK_VAL);
+#ifdef ACCELEROMETER_SELF_ACTIVATE
+	/* Set REG2, enable Auto-SLEEP and High Resolution */
     accel_write_reg(MMA8652_CTRL_REG2, MOD_HIGH_RES|SLPE_MASK);
-
-    /* Set REG4, enable Auto-SLEEP/WAKE Interrupt and the FIFO Interrupt, (do not enable Motion detection interrupt in initialization) */
-    accel_write_reg(MMA8652_CTRL_REG4, INT_EN_ASLP_MASK | INT_EN_FIFO_MASK | INT_EN_FF_MT_MASK);
-
-    /* Set REG5, Auto-SLEEP/WAKE and Motion detection Interrupt Enable mapped to INT1, and FIFO Interrupt mapped to INT2(default) */
-    accel_write_reg(MMA8652_CTRL_REG5, INT_EN_ASLP_MASK | INT_EN_FF_MT_MASK); //Set the interrupt to route to INT1
-
     /* Set REG3, Configure Wake from Freefall/Motion interrupt, and the INT pins for Push-Pull */
     accel_write_reg(MMA8652_CTRL_REG3, WAKE_FF_MT_MASK);
+    /* Set REG4, enable Auto-SLEEP/WAKE Interrupt and the FIFO Interrupt, (enable Motion detection interrupt in initialization) */
+    accel_write_reg(MMA8652_CTRL_REG4, INT_EN_ASLP_MASK | INT_EN_FIFO_MASK | INT_EN_FF_MT_MASK);
+#else
+    /* Set REG2, disable Auto-SLEEP, and High Resolution */
+    accel_write_reg(MMA8652_CTRL_REG2, MOD_HIGH_RES); // without auto wake up
+    /* Set REG3, Configure Wake from Freefall/Motion interrupt, and the INT pins for Push-Pull */
+    accel_write_reg(MMA8652_CTRL_REG3, IPOL_MASK|IPOL_MASK);
+    /* Set REG4, enable FIFO Interrupt, (do not enable Motion detection interrupt in initialization) */
+    accel_write_reg(MMA8652_CTRL_REG4,  INT_EN_FIFO_MASK); // without auto wake up
+#endif
+
+    /* Set REG5, Motion detection Interrupt Enable mapped to INT1, and FIFO Interrupt (and Auto-SLEEP) mapped to INT2(default) */
+    accel_write_reg(MMA8652_CTRL_REG5,  INT_EN_FF_MT_MASK); //Set the interrupt to route to INT1
+    //accel_write_reg(MMA8652_CTRL_REG5,  INT_EN_ASLP_MASK | INT_EN_FF_MT_MASK);
 
     /* Set REG1, Set to 20ms data rate period (50Hz), 160ms sleep datarate, non-Fast read mode (12bit). */
     accel_write_reg(MMA8652_CTRL_REG1, ACCEL_DATARATE | ACCEL_SLEEPP_DATARATE );
@@ -444,9 +471,8 @@ static void accel_configuration(void)
 	/* set MMA8652_FF_MT_CFG, setup motion event after the debounce counter time is reached, ELE = 0, OAE = 1, Event flag enable on X and Z*/
 	//accel_write_reg(MMA8652_FF_MT_CFG, OAE_MASK|ZEFE_MASK|XEFE_MASK );
 	accel_write_reg(MMA8652_FF_MT_CFG, OAE_MASK|ZEFE_MASK );
-
 	/* set MMA8652_FF_MT_THS, setup THS = ACCEL_FF_MT_THS_VALUE */
-	accel_write_reg(MMA8652_FF_MT_THS, ACCEL_FF_MT_THS_VALUE );
+	accel_write_reg(MMA8652_FF_MT_THS, ACCEL_FF_MT_THS_VALUE | DBCNTM_MASK );
 	/* set MMA8652_FF_MT_COUNT, setup debounce counter ACCEL_FF_MT_DEBOUNCE_COUNT */
 	accel_write_reg(MMA8652_FF_MT_COUNT, ACCEL_FF_MT_DEBOUNCE_COUNT );
 
@@ -455,13 +481,33 @@ static void accel_configuration(void)
 
 	/* Turn off HPF for Data Out and set 2g Mode */
 	accel_write_reg(MMA8652_XYZ_DATA_CFG, FULL_SCALE_2G );
+#else
+    /* Set REG4, enable Auto-SLEEP/WAKE Interrupt and the FIFO Interrupt, (do not enable Motion detection interrupt in initialization) */
+    accel_write_reg(MMA8652_CTRL_REG4, INT_EN_FF_MT_MASK); // without auto wake up
 
+    /* Set REG5, Auto-SLEEP/WAKE and Motion detection Interrupt Enable mapped to INT1, and FIFO Interrupt mapped to INT2(default) */
+    accel_write_reg(MMA8652_CTRL_REG5, INT_EN_FF_MT_MASK);
+
+    /* Set REG3, Configure Wake from Freefall/Motion interrupt, and the INT pins for Push-Pull */
+    accel_write_reg(MMA8652_CTRL_REG3, WAKE_FF_MT_MASK|IPOL_MASK);
+
+	/* Motion configuration and status registers */
+	/* set MMA8652_FF_MT_CFG, setup motion event after the debounce counter time is reached, ELE = 0, OAE = 1, Event flag enable on X and Z*/
+	accel_write_reg(MMA8652_FF_MT_CFG, OAE_MASK|ZEFE_MASK);
+
+	/* set MMA8652_FF_MT_THS, setup THS = ACCEL_FF_MT_THS_VALUE */
+	accel_write_reg(MMA8652_FF_MT_THS, ACCEL_FF_MT_THS_VALUE|0x80);
+
+	/* set MMA8652_FF_MT_COUNT, setup debounce counter ACCEL_FF_MT_DEBOUNCE_COUNT */
+	accel_write_reg(MMA8652_FF_MT_COUNT, ACCEL_FF_MT_DEBOUNCE_COUNT);
+
+#endif
 #endif
     // Set back to active
 	accel_weak_up();
 
     #ifdef SENSOR_DEBUG_OUTPUT
-    uint8_t ctrl_reg[12];
+    uint8_t ctrl_reg[13];
 
     accel_read_reg(MMA8652_F_SETUP,			&ctrl_reg[0]);
     accel_read_reg(MMA8652_CTRL_REG1,		&ctrl_reg[1]);
@@ -475,12 +521,20 @@ static void accel_configuration(void)
 	accel_read_reg(MMA8652_FF_MT_COUNT,		&ctrl_reg[9]);
 	accel_read_reg(MMA8652_ASLP_COUNT,		&ctrl_reg[10]);
 	accel_read_reg(MMA8652_XYZ_DATA_CFG,	&ctrl_reg[11]);
+	accel_read_reg(MMA8652_FF_MT_SRC,		&ctrl_reg[12]);
 
-	NRF_LOG_INFO("F_SETUP:%x, R1:%x, R2:%x, R3:%x, R4:%x.",
-            ctrl_reg[0], ctrl_reg[1], ctrl_reg[2], ctrl_reg[3], ctrl_reg[4]);
-	NRF_LOG_INFO("R5:%x, INT:%x, MT:%x %x %x.",
-            ctrl_reg[5], ctrl_reg[6], ctrl_reg[7], ctrl_reg[8], ctrl_reg[9]);
-	NRF_LOG_INFO("ASLP:%x, XYZ:%x.",ctrl_reg[10], ctrl_reg[11]);
+
+	//NRF_LOG_INFO("F_SETUP:%x, R1:%x, R2:%x, R3:%x ",
+    //        ctrl_reg[0], ctrl_reg[1], ctrl_reg[2], ctrl_reg[3]);
+
+	//NRF_LOG_INFO("R4:%x, ASLP:%x, XYZ:%x, FT_SRC:%x.",ctrl_reg[10], ctrl_reg[11], ctrl_reg[12], ctrl_reg[4]);
+
+	//NRF_LOG_INFO("R5:%x, INT:%x. ",
+    //        ctrl_reg[5], ctrl_reg[6]);
+
+	//NRF_LOG_INFO("MT:%x %x %x.",
+	//             ctrl_reg[7], ctrl_reg[8], ctrl_reg[9]);
+
 	#endif
 	NRF_LOG_INFO("accel_configuration end.");
 }
@@ -542,17 +596,13 @@ static ret_code_t accel_i2c_gpio_init (void)
     nrf_drv_twi_enable(&acce_m_twi);
 
     /* GPIO Initialize */
-    nrf_drv_gpiote_in_config_t in_config = GPIOTE_CONFIG_IN_SENSE_TOGGLE(true);
-    in_config.pull = NRF_GPIO_PIN_PULLUP;
-    //err_code = nrf_drv_gpiote_in_init(MMA8652_INT1_PIN, &in_config, mma8652_int1_handler);
+	nrf_drv_gpiote_in_config_t in_config = GPIOTE_CONFIG_IN_SENSE_HITOLO(false);	
     err_code = nrf_drv_gpiote_in_init(MMA8652_INT2_PIN, &in_config, mma8652_int2_handler);
 
     APP_ERROR_CHECK(err_code);
 
     /* GPIO Initialize as system wakeup pin */
-    nrf_drv_gpiote_in_config_t in_config_1 = GPIOTE_CONFIG_IN_SENSE_HITOLO(false);
-    in_config_1.pull = NRF_GPIO_PIN_PULLUP;
-	err_code = nrf_drv_gpiote_in_init(MMA8652_INT1_PIN, &in_config_1, mma8652_int1_handler);
+	err_code = nrf_drv_gpiote_in_init(MMA8652_INT1_PIN, &in_config, mma8652_int1_handler);
 	APP_ERROR_CHECK(err_code);
 
 	return err_code;
@@ -561,7 +611,6 @@ static ret_code_t accel_i2c_gpio_init (void)
  */
 static void accel_i2c_gpio_enable (void)
 {
-	nrf_drv_gpiote_in_event_enable(MMA8652_INT2_PIN, true);
 	nrf_drv_gpiote_in_event_enable(MMA8652_INT1_PIN, true);
 	NVIC_EnableIRQ(GPIOTE_IRQn);
 }
@@ -571,16 +620,18 @@ static void accel_i2c_gpio_enable (void)
  */
 void accel_set_deactive(void)
 {
-	/* Set to standby mode*/
+	/* Set to standby mode */
     accel_standby();
 
+    /* enable/disable interrupt */
 	accel_config_fifo_int(false);
 	accel_config_motion_int(true);
-	NRF_LOG_INFO("accel_set_deactive: disable FIFO, enable motion detection")
-	/* stop timer to send cscs information to ble*/
-	application_timers_stop();
+	NRF_LOG_INFO("accel_set_deactive: disable FIFO, enable motion detection");
 	acc_step_reset_angle();
-	// Set back to active
+#ifndef ACCELEROMETER_SELF_ACTIVATE
+	application_timers_stop();
+#endif
+	/* Set back to active mode */
 	accel_weak_up();
 }
 
@@ -595,8 +646,10 @@ void accel_set_active(void)
 
 	accel_config_fifo_int(true);
 	accel_config_motion_int(false);
-	NRF_LOG_INFO("accel_set_active: enable FIFO, disable motion detection")
+#ifndef ACCELEROMETER_SELF_ACTIVATE
 	application_timers_start();
+#endif
+	NRF_LOG_INFO("accel_set_active: enable FIFO, disable motion detection");
 	// Set back to active
 	accel_weak_up();
 
@@ -629,12 +682,22 @@ void accel_standby(void)
 	nrf_delay_ms(50);
 }
 
+/**@brief Function lowPassExponential fifo accelerometer data.
+ *	read numbers of DEF_WATERMARK_VAL from accel_buff[], and turn into DEF_WATERMARK_VAL angular samples
+ */
+static float lowPassExponential(float input, float average)
+{
+	#define LOW_PASS_FACTOR 0.7 // ensure factor belongs to  [0,1]
+    return input*LOW_PASS_FACTOR + (1-LOW_PASS_FACTOR)*average;
+}
+
 /**@brief Function for burst read sensor fifo accelerometer data.
  *	read numbers of DEF_WATERMARK_VAL from accel_buff[], and turn into DEF_WATERMARK_VAL angular samples
  */
 void acc_read_fifodata(void)
 {
-	float f_average_ang= 0, ax=0,ay=0, az= 0;
+	float f_average_ang= 0, /*ax=0,*/ ay = 0, az = 0;
+	static double last_ay = 0, last_az = 0;
 	uint8_t i= 0;
 	uint16_t angle_sample[DEF_WATERMARK_VAL] = {0};
 	for(i = 0; i < DEF_WATERMARK_VAL; i++)
@@ -644,19 +707,33 @@ void acc_read_fifodata(void)
 		accel_xyz[1] = (int16_t)((uint16_t)((uint16_t)accel_buff[(i*6)+2] << 8) | (uint16_t)accel_buff[(i*6)+3]);
 		accel_xyz[2] = (int16_t)((uint16_t)((uint16_t)accel_buff[(i*6)+4] << 8) | (uint16_t)accel_buff[(i*6)+5]);
 
-		ax = ((float)accel_xyz[0])/(float)(SENSITIVITY_2G*16);
-		//ay = ((float)accel_xyz[1])/(float)(SENSITIVITY_2G*16);
+		//ax = ((float)accel_xyz[0])/(float)(SENSITIVITY_2G*16);
+		ay = ((float)accel_xyz[1])/(float)(SENSITIVITY_2G*16);
 		az = ((float)accel_xyz[2])/(float)(SENSITIVITY_2G*16);
-		//NRF_LOG_INFO( "X: " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(ax));
-		//NRF_LOG_INFO( "Y: " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(ay));
-		//NRF_LOG_INFO( "Z: " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(az));
+		//f_average_ang = (float)(atan2((double)az,(double)ay)*180/PI)+180.0;
+		//NRF_LOG_INFO( "f_average_ang0: " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(f_average_ang));
+		//NRF_LOG_INFO( "X : " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(ax));
+		//NRF_LOG_INFO( "Y : " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(ay));
+		//NRF_LOG_INFO( "Z : " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(az));
+
+		//low pass filter
+		//ax = lowPassExponential(ax, last_ax);
+		//last_ax = ax;
+		ay = lowPassExponential(ay, last_ay);
+		last_ay = ay;
+		az = lowPassExponential(az, last_az);
+		last_az = az;
+		//NRF_LOG_INFO( "f_average_ang1: " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(f_average_ang));
+		//NRF_LOG_INFO( "X2: " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(ax));
+		//NRF_LOG_INFO( "Y2: " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(ay));
+		//NRF_LOG_INFO( "Z2: " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(az));
 		//mag_accel =/rt(ax*ax + ay*ay + az*az);
 		//acc_step_update(mag_accel);
 
 		// LezyneSPD use z and x axis
-		f_average_ang = (float)(atan2((double)az,(double)ax)*180/PI)+180.0;
+		f_average_ang = (float)(atan2((double)az,(double)ay)*180/PI)+180.0;
 		//NRF_LOG_INFO( "f_average_ang: " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(f_average_ang));
-		angle_sample[i]=f_average_ang;
+		angle_sample[i] = (uint16_t)(f_average_ang + 0.5);
 	}
 	acc_step_update_angle(angle_sample);
 
@@ -699,10 +776,11 @@ static void acc_step_update_angle(uint16_t *angle_array)
 		}
 		else if((temp_angle_diff > DEF_MAX_ANGLE_WINDOW) || (temp_angle_diff < (DEF_MAX_ANGLE_WINDOW * -1)))
 		{
-			NRF_LOG_INFO("Warning!!! i:(%d) the difference (%d) > 75, [%d]-[%d] ",angle_array[i] , (i==0)?last_angle_residue:angle_array[i-1] );
+			NRF_LOG_INFO("Warning!!! i:(%d) the difference (%d) > 75, [%d]-[%d] ",i,temp_angle_diff, angle_array[i] , (i==0)?last_angle_residue:angle_array[i-1] );
 		}
 
 		current_angle += temp_angle_diff;
+#ifdef SENSOR_DEBUG_OUTPUT
 		if(i == 0)
 		{
 			//NRF_LOG_INFO("i:%d,[%d]-[%d] =[%d]   ",i,angle_array[i], last_angle_residue,temp_angle_diff );
@@ -711,15 +789,18 @@ static void acc_step_update_angle(uint16_t *angle_array)
 		{
 			//NRF_LOG_INFO("i:%d,[%d]-[%d] =[%d]   ",i,angle_array[i], angle_array[i-1],temp_angle_diff );
 		}
+#endif
 	}
 
 	last_angle_residue = last_angle;		// update last_angle_residue for current last_angle
 
-	total_angle += abs(current_angle);
-	ui32_total_lap = (total_angle/DEF_ANGLE_360_DEGREE);
+	ui32_total_angle += abs(current_angle);
+	ui32_total_lap = (ui32_total_angle/DEF_ANGLE_360_DEGREE);
 
-	//NRF_LOG_INFO("update_angle_test(), Total A:%d, Total L:%d, Cur_A: %d. ", total_angle,ui32_total_lap, current_angle )
-	NRF_LOG_INFO("update_angle_test(),n:[%3d]-0:[%3d] = :%3d, Total: %5d",last_angle,angle_array[0],current_angle, total_angle);
+#ifdef SENSOR_DEBUG_OUTPUT
+	NRF_LOG_INFO("update_angle_test(), Total A:%d, Total L:%d, Cur_A: %d. ", ui32_total_angle,ui32_total_lap, current_angle )
+	//NRF_LOG_INFO("update_angle_test(),n:[%3d]-0:[%3d] = :%3d, Total: %5d",last_angle,angle_array[0],current_angle, ui32_total_angle);
+#endif
 }
 
 /**@brief Function acc_step_reset_angle reset to default value.
@@ -729,7 +810,7 @@ void acc_step_reset_angle(void)
 {
     last_angle_residue = DEF_INVALID_LAST_ANGLE ;
     ui32_total_lap = 0;
-    total_angle = 0;
+    ui32_total_angle = 0;
 }
 
 
@@ -766,7 +847,7 @@ void accel_calibration (void)
 	accel_weak_up(); // Active mode again
 }
 
-/**@brief Function for populating simulated cycling speed and cadence measurements.
+/**@brief Function for populating simulated cycling speed measurements.
  */
 void accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 {
@@ -778,19 +859,35 @@ void accel_csc_measurement(ble_cscs_meas_t * p_measurement)
     uint16_t    cumulative_crank_revs;                                  /**< Cumulative Crank Revolutions. */
     uint16_t    last_crank_event_time;                                  /**< Last Crank Event Time. */
 #endif
-    uint8_t ctrl_reg[4];
-    accel_read_reg(MMA8652_SYSMOD, 			&ctrl_reg[2]);
-    //accel_read_reg(MMA8652_INT_SOURCE,		&ctrl_reg[0]);
-    //accel_read_reg(MMA8652_STATUS_00,		&ctrl_reg[1]);
-    //accel_read_reg(MMA8652_CTRL_REG4,		&ctrl_reg[3]);
+    static uint16_t event_time = 0;
+    static uint32_t ui32_last_total_angle = 0;
+    uint16_t event_time_inc, last_wheel_event_time;
+    uint16_t current_angle = 0, average_speed_kmh = 0;
 
+    current_angle = ui32_total_angle - ui32_last_total_angle;
+    average_speed_kmh = (uint16_t)((float)(current_angle * ANGLE_SPEED_TO_METER_PER_HOUR / 1000));
+
+    event_time_inc = (1024 * SPEED_AND_CADENCE_MEAS_INTERVAL) / 1000;
+    if (current_angle > 0)
+    {
+    	last_wheel_event_time =
+               event_time + (event_time_inc * (current_angle - last_angle_residue) / current_angle);
+    }
+    else
+    {
+    	last_wheel_event_time = event_time + event_time_inc;
+    }
     p_measurement->is_wheel_rev_data_present = true;
     p_measurement->is_crank_rev_data_present = false;
     p_measurement->cumulative_wheel_revs = ui32_total_lap;
-    p_measurement->last_wheel_event_time = (uint16_t) total_angle;  //need to change
+    p_measurement->last_wheel_event_time = average_speed_kmh;  //need to change
+//for test log
+    p_measurement->is_crank_rev_data_present = true;
+    p_measurement->cumulative_crank_revs 	 = ui32_total_angle;
+    p_measurement->last_crank_event_time	 = ui32_last_total_angle;
 
-    NRF_LOG_INFO("measurement Report: sysmode: %2x, cum_wheel_revs: %d, last_time: %d", ctrl_reg[2], p_measurement->cumulative_wheel_revs,p_measurement->last_wheel_event_time);
-
+    ui32_last_total_angle = ui32_total_angle;
+    event_time += event_time_inc;
 }
 
 #if 0
@@ -881,12 +978,12 @@ void accel_init(void)
 	/* timer init */
 	accel_timers_init();
 
-	application_timers_start(); // for test propose!!!
+	//application_timers_start(); // for test propose!!!
 
 	/* enable gpio */
 	accel_i2c_gpio_enable();
 	
-	/* reset acc step angle parameters*/
+	/* reset acc step angle parameters */
 	acc_step_reset_angle();
 
 }
