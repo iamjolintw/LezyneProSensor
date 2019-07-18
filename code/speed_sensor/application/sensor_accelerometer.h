@@ -95,7 +95,8 @@ typedef struct {
 /* defination of ratio of the circumference of a circle to its diameter*/
 #define PI 3.14159265
 
-#define ANGLE_SPEED_TO_METER_PER_HOUR ((WHEEL_CIRCUMFERENCE_MM * 3600)/(DEF_ANGLE_360_DEGREE * SPEED_AND_CADENCE_MEAS_INTERVAL))
+#define ANGLE_SPEED_TO_METER_PER_HOUR ((WHEEL_CIRCUMFERENCE_MM * 3600)/(DEF_ANGLE_360_DEGREE))
+#define DEF_TOTAL_TIME_STAMP_MAXIMUM 	64000	//// total time is 1000-based. event time is 1024-based. total maximum value shall less that  64,000 (0x10000 / 0x800 * 2000)
 
 typedef struct {
 	uint32_t 		ui32_sample;
@@ -121,6 +122,6 @@ bool 		accel_task_check_enable(t_accel_task_pending check);
 ret_code_t 	accel_task_enable_mask(t_accel_task_pending enable);
 void 		acc_read_fifodata(void);
 void 		acc_step_reset_angle(void);
-void 		accel_csc_measurement(ble_cscs_meas_t * p_measurement);
+ret_code_t 		accel_csc_measurement(ble_cscs_meas_t * p_measurement);
 
 #endif /* SENSOR_ACCELEROMETER_H_ */
