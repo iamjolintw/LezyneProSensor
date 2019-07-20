@@ -103,6 +103,8 @@
 #include "nrf_log_ctrl.h"
 #include "nrf_log_default_backends.h"
 
+#define LINK_TOTAL                      NRF_SDH_BLE_PERIPHERAL_LINK_COUNT + \
+                                        NRF_SDH_BLE_CENTRAL_LINK_COUNT
 
 #define APP_BLE_OBSERVER_PRIO           3                                           /**< Application's BLE observer priority. You shouldn't need to modify this value. */
 #define APP_BLE_CONN_CFG_TAG            1                                           /**< A tag identifying the SoftDevice BLE configuration. */
@@ -140,9 +142,12 @@
 
 #define DEAD_BEEF                       0xDEADBEEF                                  /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
+#define APP_ADV_TIMEOUT                 0                                			/**< Time for which the device must be advertising in non-connectable mode (in seconds). 0 disables timeout. */
+#define APP_ADV_ADV_INTERVAL            MSEC_TO_UNITS(100, UNIT_0_625_MS)           /**< The advertising interval. This value can vary between 100ms to 10.24s). */
+
 BLE_CSCS_DEF(m_cscs);                                                               /**< Cycling speed and cadence service instance. */
 NRF_BLE_GATT_DEF(m_gatt);                                                           /**< GATT module instance. */
-NRF_BLE_QWR_DEF(m_qwr);                                                             /**< Context for the Queued Write module.*/
+NRF_BLE_QWRS_DEF(m_qwr, NRF_SDH_BLE_TOTAL_LINK_COUNT);                             	/**< Context for the Queued Write module.*/
 BLE_ADVERTISING_DEF(m_advertising);                                                 /**< Advertising module instance. */
 
 static uint16_t          m_conn_handle = BLE_CONN_HANDLE_INVALID;                   /**< Handle of the current connection. */
@@ -167,7 +172,7 @@ static ble_uuid_t m_adv_uuids[] =                                               
     {BLE_UUID_DEVICE_INFORMATION_SERVICE, BLE_UUID_TYPE_BLE}
 };
 
-static void advertising_start(bool erase_bonds);
+static void advertising_start(void);
 
 #ifdef CSCS_MOCK_ENABLE
 #include "sensorsim.h"
@@ -403,7 +408,7 @@ static void pm_evt_handler(pm_evt_t const * p_evt)
     switch (p_evt->evt_id)
     {
         case PM_EVT_PEERS_DELETE_SUCCEEDED:
-            advertising_start(false);
+            advertising_start();
             break;
 
         default:
@@ -507,9 +512,11 @@ static void services_init(void)
 
     // Initialize Queued Write Module.
     qwr_init.error_handler = nrf_qwr_error_handler;
-
-    err_code = nrf_ble_qwr_init(&m_qwr, &qwr_init);
-    APP_ERROR_CHECK(err_code);
+    for (uint32_t i = 0; i < LINK_TOTAL; i++)
+    {
+        err_code = nrf_ble_qwr_init(&m_qwr[i], &qwr_init);
+        APP_ERROR_CHECK(err_code);
+    }
 
     // Initialize DFU service.
     dfus_init.evt_handler = ble_dfu_evt_handler;
@@ -554,6 +561,9 @@ static void services_init(void)
 
     err_code = ble_dis_init(&dis_init);
     APP_ERROR_CHECK(err_code);
+
+    // init connection state
+    ble_conn_state_init();
 }
 
 /**@brief Function for handling the Connection Parameter events.
@@ -604,7 +614,7 @@ static void conn_params_init(void)
     connection_params_init.next_conn_params_update_delay  = NEXT_CONN_PARAMS_UPDATE_DELAY;
     connection_params_init.max_conn_params_update_count   = MAX_CONN_PARAMS_UPDATE_COUNT;
     connection_params_init.start_on_notify_cccd_handle    = m_cscs.meas_handles.cccd_handle;
-    connection_params_init.disconnect_on_fail             = false;
+    connection_params_init.disconnect_on_fail             = true;
     connection_params_init.evt_handler                    = on_conn_params_evt;
     connection_params_init.error_handler                  = conn_params_error_handler;
 
@@ -619,7 +629,9 @@ static void conn_params_init(void)
 static void sleep_mode_enter(void)
 {
 	// deactivate accelerometer
+#ifndef CSCS_MOCK_ENABLE
 	accel_set_deactive();
+#endif
 
     ret_code_t err_code = bsp_indication_set(BSP_INDICATE_IDLE);
     APP_ERROR_CHECK(err_code);
@@ -652,12 +664,23 @@ static void on_adv_evt(ble_adv_evt_t ble_adv_evt)
             break;
 
         case BLE_ADV_EVT_IDLE:
+        {
+            uint32_t    periph_link_cnt = ble_conn_state_peripheral_conn_count(); // Number of peripheral links.
+            if (periph_link_cnt)
+            {
+            	NRF_LOG_INFO("Idle - re-advertising");
+            	advertising_start();
+            }
+            else
+            {
 #if 0
-        	NRF_LOG_INFO("Idle - re-advertising");
-        	advertising_start(false);
+            	NRF_LOG_INFO("Idle - re-advertising");
+            	advertising_start();
 #else
-        	sleep_mode_enter();
+            	sleep_mode_enter();
 #endif
+            }
+        }
             break;
 
         default:
@@ -665,6 +688,55 @@ static void on_adv_evt(ble_adv_evt_t ble_adv_evt)
     }
 }
 
+
+/**@brief Function for handling the Connected event.
+ *
+ * @param[in] p_gap_evt GAP event received from the BLE stack.
+ */
+static void on_connected(const ble_gap_evt_t * const p_gap_evt)
+{
+    ret_code_t  err_code;
+    uint32_t    periph_link_cnt = ble_conn_state_peripheral_conn_count(); // Number of peripheral links.
+
+    NRF_LOG_INFO("Connection with link 0x%x established.", p_gap_evt->conn_handle);
+
+    // Assign connection handle to available instance of QWR module.
+    for (uint32_t i = 0; i < NRF_SDH_BLE_PERIPHERAL_LINK_COUNT; i++)
+    {
+        if (m_qwr[i].conn_handle == BLE_CONN_HANDLE_INVALID)
+        {
+            err_code = nrf_ble_qwr_conn_handle_assign(&m_qwr[i], p_gap_evt->conn_handle);
+            APP_ERROR_CHECK(err_code);
+            break;
+        }
+    }
+
+    if (periph_link_cnt != NRF_SDH_BLE_PERIPHERAL_LINK_COUNT)
+    {
+        // Continue advertising. More connections can be established because the maximum link count has not been reached.
+        advertising_start();
+    }
+}
+
+
+/**@brief Function for handling the Disconnected event.
+ *
+ * @param[in] p_gap_evt GAP event received from the BLE stack.
+ */
+static void on_disconnected(ble_gap_evt_t const * const p_gap_evt)
+{
+    uint32_t    periph_link_cnt = ble_conn_state_peripheral_conn_count(); // Number of peripheral links.
+
+    NRF_LOG_INFO("Connection 0x%x has been disconnected. Reason: 0x%X",
+                 p_gap_evt->conn_handle,
+                 p_gap_evt->params.disconnected.reason);
+
+    if (periph_link_cnt == (NRF_SDH_BLE_PERIPHERAL_LINK_COUNT - 1))
+    {
+        // Advertising is not running when all connections are taken, and must therefore be started.
+        advertising_start();
+    }
+}
 
 /**@brief Function for handling BLE events.
  *
@@ -678,21 +750,21 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
     switch (p_ble_evt->header.evt_id)
     {
         case BLE_GAP_EVT_CONNECTED:
-            NRF_LOG_INFO("Connected");
-            err_code = bsp_indication_set(BSP_INDICATE_CONNECTED);
-            APP_ERROR_CHECK(err_code);
-            m_conn_handle = p_ble_evt->evt.gap_evt.conn_handle;
-            err_code = nrf_ble_qwr_conn_handle_assign(&m_qwr, m_conn_handle);
-            APP_ERROR_CHECK(err_code);
+            on_connected(&p_ble_evt->evt.gap_evt);
+        	err_code = bsp_indication_set(BSP_INDICATE_CONNECTED);
+        	APP_ERROR_CHECK(err_code);
+#ifndef CSCS_MOCK_ENABLE
             /* activate accelerometer */
             accel_set_active();
+#endif
             break;
 
         case BLE_GAP_EVT_DISCONNECTED:
-            NRF_LOG_INFO("Disconnected");
-            m_conn_handle = BLE_CONN_HANDLE_INVALID;
+            on_disconnected(&p_ble_evt->evt.gap_evt);
+#ifndef CSCS_MOCK_ENABLE
             /* deactivate accelerometer */
             accel_set_deactive();
+#endif
             break;
 
         case BLE_GAP_EVT_PHY_UPDATE_REQUEST:
@@ -706,6 +778,13 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             err_code = sd_ble_gap_phy_update(p_ble_evt->evt.gap_evt.conn_handle, &phys);
             APP_ERROR_CHECK(err_code);
         } break;
+
+
+        case BLE_GATTS_EVT_SYS_ATTR_MISSING:
+            // No system attributes have been stored.
+            err_code = sd_ble_gatts_sys_attr_set(p_ble_evt->evt.gap_evt.conn_handle, NULL, 0, 0);
+            APP_ERROR_CHECK(err_code);
+            break;
 
         case BLE_GATTC_EVT_TIMEOUT:
             // Disconnect on GATT Client timeout event.
@@ -830,37 +909,48 @@ static void peer_manager_init(void)
 }
 
 
-/**@brief Clear bond information from persistent storage.
- */
-static void delete_bonds(void)
-{
-    ret_code_t err_code;
-
-    NRF_LOG_INFO("Erase bonds!");
-
-    err_code = pm_peers_delete();
-    APP_ERROR_CHECK(err_code);
-}
-
-
 /**@brief Function for initializing the Advertising functionality.
  */
 static void advertising_init(void)
 {
-    ret_code_t             err_code;
-    ble_advertising_init_t init;
+    ret_code_t             	err_code;
+    ble_advertising_init_t 	init;
+    ble_gap_addr_t			m_mac_addr;
+	int8_t 					tx_power_level = 0;
+    uint8_t const 			lezyne_mac_address[6] = {0xB4, 0x37, 0xD1, 0x06, 0x00, 0x00};
 
+    // set MAC address
+    err_code = sd_ble_gap_addr_get(&m_mac_addr);
+    APP_ERROR_CHECK(err_code);
+
+	for (uint8_t x=0 ; x<4 ; x++)
+		m_mac_addr.addr[5-x] = lezyne_mac_address[x];
+
+	uint16_t uLower = (uint16_t)(NRF_FICR->DEVICEID[0]);
+	m_mac_addr.addr[1] 	= (uint8_t)(uLower & 0xFF);
+	m_mac_addr.addr[0]	= (uint8_t)(uLower >> 8);
+
+    m_mac_addr.addr_type = BLE_GAP_ADDR_TYPE_PUBLIC;
+
+    err_code = sd_ble_gap_addr_set(&m_mac_addr);
+    APP_ERROR_CHECK(err_code);
+
+    // Build and set advertising data.
     memset(&init, 0, sizeof(init));
 
-    init.advdata.name_type               = BLE_ADVDATA_FULL_NAME;
-    init.advdata.include_appearance      = true;
-    init.advdata.flags                   = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
-    init.advdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuids) / sizeof(m_adv_uuids[0]);
-    init.advdata.uuids_complete.p_uuids  = m_adv_uuids;
+    init.advdata.name_type               	= BLE_ADVDATA_FULL_NAME;
+    init.advdata.include_appearance      	= true;
+    init.advdata.flags                   	= BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
+    init.advdata.p_tx_power_level			= &tx_power_level;
 
-    advertising_config_get(&init.config);
+    init.srdata.uuids_complete.uuid_cnt 	= sizeof(m_adv_uuids) / sizeof(m_adv_uuids[0]);
+    init.srdata.uuids_complete.p_uuids  	= m_adv_uuids;
 
-    init.evt_handler = on_adv_evt;
+    init.config.ble_adv_fast_enabled  		= true;
+    init.config.ble_adv_fast_interval 		= APP_ADV_INTERVAL;
+    init.config.ble_adv_fast_timeout  		= APP_ADV_DURATION;
+
+    init.evt_handler 						= on_adv_evt;
 
     err_code = ble_advertising_init(&m_advertising, &init);
     APP_ERROR_CHECK(err_code);
@@ -881,20 +971,13 @@ static void power_management_init(void)
 
 /**@brief Function for starting advertising.
  */
-static void advertising_start(bool erase_bonds)
+static void advertising_start(void)
 {
     ret_code_t err_code;
 
-    if (erase_bonds == true)
-    {
-        delete_bonds();
-        // Advertising is started by PM_EVT_PEERS_DELETE_SUCCEEDED event.
-    }
-    else
-    {
-        err_code = ble_advertising_start(&m_advertising, BLE_ADV_MODE_FAST);
-        APP_ERROR_CHECK(err_code);
-    }
+    err_code = ble_advertising_start(&m_advertising, BLE_ADV_MODE_FAST);
+
+    APP_ERROR_CHECK(err_code);
 }
 
 /**@brief Function to return the status of connection.
@@ -939,11 +1022,9 @@ void ble_init(void)
  */
 void ble_advertising_entry(void)
 {
-    bool erase_bonds = true;
-
 	// Start execution.
 	NRF_LOG_INFO("ble advertising.");
-	advertising_start(erase_bonds);
+	advertising_start();
 }
 
 
@@ -1033,18 +1114,23 @@ void accel_csc_meas_timeout_handler(void * p_context)
 		csc_sim_measurement(&cscs_measurement);
 #else
 		err_code = accel_csc_measurement(&cscs_measurement);
-#endif
 		if( err_code == NRF_SUCCESS)
+#endif
 		{
-			err_code = ble_cscs_measurement_send(&m_cscs, &cscs_measurement);
-			if ((err_code != NRF_SUCCESS) &&
-				(err_code != NRF_ERROR_INVALID_STATE) &&
-				(err_code != NRF_ERROR_RESOURCES) &&
-				(err_code != NRF_ERROR_BUSY) &&
-				(err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
-			   )
+			ble_conn_state_conn_handle_list_t conn_handles = ble_conn_state_periph_handles();
+			for (uint8_t i = 0; i < conn_handles.len; i++)
 			{
-				APP_ERROR_HANDLER(err_code);
+				m_cscs.conn_handle = conn_handles.conn_handles[i];
+				err_code = ble_cscs_measurement_send(&m_cscs, &cscs_measurement);
+				if ((err_code != NRF_SUCCESS) &&
+						(err_code != NRF_ERROR_INVALID_STATE) &&
+						(err_code != NRF_ERROR_RESOURCES) &&
+						(err_code != NRF_ERROR_BUSY) &&
+						(err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
+				)
+				{
+					APP_ERROR_HANDLER(err_code);
+				}
 			}
 		}
     }

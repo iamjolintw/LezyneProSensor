@@ -85,7 +85,9 @@ static void 	application_timers_start(void);
 static void 	application_timers_stop(void);
 static void 	acc_step_update_angle(uint16_t *angle_array);
 
+#ifdef ACCELEROMETER_SELF_TIMEOUT
 static void 		accel_self_csc_meas_timeout_handler(void * p_context);
+#endif
 static ret_code_t 	accel_write_reg(uint8_t reg_addr, uint8_t reg_data);
 static ret_code_t 	accel_read_reg(uint8_t reg_addr, uint8_t *reg_data);
 static ret_code_t 	accel_burst_read_reg(uint8_t addr, uint8_t * pdata, size_t size);
@@ -467,7 +469,7 @@ static void accel_configuration(void)
     /* Set REG2, disable Auto-SLEEP, and High Resolution */
     accel_write_reg(MMA8652_CTRL_REG2, MOD_HIGH_RES); // without auto wake up
     /* Set REG3, Configure Wake from Freefall/Motion interrupt, and the INT pins for Push-Pull */
-    accel_write_reg(MMA8652_CTRL_REG3, IPOL_MASK|PP_OD_MASK);
+    accel_write_reg(MMA8652_CTRL_REG3, IPOL_MASK);
     /* Set REG4, enable FIFO Interrupt, (do not enable Motion detection interrupt in initialization) */
     accel_write_reg(MMA8652_CTRL_REG4,  INT_EN_FIFO_MASK); // without auto wake up
 #endif
@@ -1055,25 +1057,25 @@ typedef struct ble_cscs_meas_s
 void accel_init(void)
 {
 	NRF_LOG_INFO("accel_init.");
-
+#ifndef CSCS_MOCK_ENABLE
 	/* hardware initialize - I2C & GPIO */
 	accel_i2c_gpio_init();
 
 	/* configuration */
 	accel_configuration();
-
+#endif
 	/* timer init */
 	accel_timers_init();
-
-#ifdef ACCELEROMETER_SELF_ACTIVATE
-	application_timers_start();
+#if defined (CSCS_MOCK_ENABLE) || defined (ACCELEROMETER_SELF_ACTIVATE)
+	application_timers_start(); // for test propose!!!
 #endif
 
+#ifndef CSCS_MOCK_ENABLE
 	/* enable gpio */
 	accel_i2c_gpio_enable();
 	
 	/* reset acc step angle parameters */
 	acc_step_reset_angle();
-
+#endif
 }
 #endif /* SENSOR_ACCELEROMETER_C_ */
