@@ -48,6 +48,7 @@ typedef enum{
 	eSTEP_RESET,
 	eSTEP_START_PEAK,
 	eSTEP_PEAK_DETECT,
+	eSTEP_STRAT_VALLEY,
 	eSTEP_VALLEY_DETECT,
 	eSTEP_STEP_DETECT,
 
@@ -58,37 +59,15 @@ typedef enum {
 	SENSOR_TASK_INT_FIFO = 0x01,
 	SENSOR_TASK_INT_DRDY = 0x02,
 	SENSOR_TASK_INT_MTDT = 0x03,
+	SENSOR_TASK_INT_DUMP = 0x04,
 	SENSOR_TASK_MAX = 0xFF
 }t_accel_task_pending;
 
-#if 0
-typedef struct {
-	uint32_t 		sample;
-    float 			raw[5];
-    uint32_t 		rawidx;
-    float 			afilt;
-    float 			min, tempmin;
-    float 			max, tempmax;
-    float 			trs, trsp, trsn;
-    bool 			startpeak, startvalley, checkstep;
-    float 			old, peakmax, peakidx, peakidxprev, valleymax, valleyidx;
-    step_detect_t 	step_state;
-    uint32_t 		step_wait_count;
-    uint32_t 		temp_step;
-} ;
-#endif
-
-#define DEF_STEP_WAIT_TIMEOUT   200 //200
-#define DEF_RESET_VAL_COUNT     50
-#define DEF_SAMPLE_TO_AVG       1
-#define DEF_SAMPLE_1ST       	0
-#define DEF_SAMPLE_2ND       	1
-#define DEF_SAMPLE_3RD       	2
-#define DEF_SAMPLE_4TH       	3
-#define DEF_SAMPLE_5TH       	4
-
 #define DEF_MAX_ANGLE_WINDOW    85  // 75 +10 degree equal 85Km/hr in 50 hz ODR
+#define DEF_ANGLE_90_DEGREE    90  //
 #define DEF_ANGLE_180_DEGREE    180  //
+#define DEF_ANGLE_180_DEGREE    180  //
+#define DEF_ANGLE_270_DEGREE    270  //
 #define DEF_ANGLE_360_DEGREE    360  //
 /* defination a invalid angle for first time calculate lap*/
 #define DEF_INVALID_LAST_ANGLE 	-999	//
@@ -98,19 +77,26 @@ typedef struct {
 #define ANGLE_SPEED_TO_METER_PER_HOUR ((WHEEL_CIRCUMFERENCE_MM * 3600)/(DEF_ANGLE_360_DEGREE))
 #define DEF_TOTAL_TIME_STAMP_MAXIMUM 	64000	//// total time is 1000-based. event time is 1024-based. total maximum value shall less that  64,000 (0x10000 / 0x800 * 2000)
 
-typedef struct {
-	uint32_t 		ui32_sample;
-    float 			f_raw_x[DEF_SAMPLE_TO_AVG];
-    float 			f_raw_y[DEF_SAMPLE_TO_AVG];
-    float 			f_raw_z[DEF_SAMPLE_TO_AVG];
-    uint32_t 		ui32_rawidx;
-    float 			f_average_ang;
-    float 			f_min, f_tempmin;
-    float 			f_max, f_tempmax;
-    float 			f_trs, f_trsp, f_trsn;
-} t_angle_step;
+#define ACCELEROMETER_INITIATIVE_MAX_LEVEL0		1.20f
+#define ACCELEROMETER_INITIATIVE_MIN_LEVEL0		1.00f
+#define ACCELEROMETER_INITIATIVE_MAX_LEVEL1		1.50f
+#define ACCELEROMETER_INITIATIVE_MIN_LEVEL1		1.30f
 
-extern uint32_t steps;
+/* accelerometer sensitivity setting, default is 8G*/
+//#define ACCELEROMETER_SENSITIVITY_2G_SUPPORT
+//#define ACCELEROMETER_SENSITIVITY_4G_SUPPORT
+#define ACCELEROMETER_SENSITIVITY_8G_SUPPORT
+
+#ifdef ACCELEROMETER_SENSITIVITY_2G_SUPPORT
+	#define ACCEL_SENSITIVITY_CONFIG 			SENSITIVITY_2G
+	#define ACCEL_FULL_SCALE_REG				FULL_SCALE_2G
+#elif ACCELEROMETER_SENSITIVITY_4G_SUPPORT
+#define ACCEL_SENSITIVITY_CONFIG 				SENSITIVITY_4G
+#define ACCEL_FULL_SCALE_REG					FULL_SCALE_4G
+#else
+#define ACCEL_SENSITIVITY_CONFIG 				SENSITIVITY_8G
+#define ACCEL_FULL_SCALE_REG					FULL_SCALE_8G
+#endif
 
 /* FUNCTIONS */
 void 		accel_init(void);
@@ -121,6 +107,7 @@ void 		accel_task_disable_mask(t_accel_task_pending disable);
 bool 		accel_task_check_enable(t_accel_task_pending check);
 ret_code_t 	accel_task_enable_mask(t_accel_task_pending enable);
 void 		acc_read_fifodata(void);
+void 		acc_read_fifodata_datadump(void);
 void 		acc_step_reset_angle(void);
 ret_code_t 		accel_csc_measurement(ble_cscs_meas_t * p_measurement);
 

@@ -60,9 +60,10 @@ static void idle_state_handle(void)
 		acc_read_fifodata();
 		accel_task_disable_mask(SENSOR_TASK_INT_FIFO);
 	}
-	else if(accel_task_check_enable(SENSOR_TASK_INT_DRDY))
+	if(accel_task_check_enable(SENSOR_TASK_INT_DUMP))
 	{
-
+		accel_task_disable_mask(SENSOR_TASK_INT_DUMP);
+		acc_read_fifodata_datadump();
 	}
     if (NRF_LOG_PROCESS() == false)
     {
