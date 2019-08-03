@@ -1172,26 +1172,29 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 void accel_init(void)
 {
 	NRF_LOG_INFO("accel_init.");
-
+#ifndef CSCS_MOCK_ENABLE
 	/* hardware initialize - I2C & GPIO */
 	accel_i2c_gpio_init();
 
 	/* configuration */
 	accel_configuration();
+#endif
 
 	/* timer init */
 	accel_timers_init();
 
-#ifdef ACCELEROMETER_SELF_TIMEOUT
+#if defined ACCELEROMETER_SELF_TIMEOUT | defined CSCS_MOCK_ENABLE
 #ifndef ACCELEROMETER_DUMP_FIFO
 	application_timers_start();
 #endif
 #endif
 
+#ifndef CSCS_MOCK_ENABLE
 	/* enable gpio */
 	accel_i2c_gpio_enable();
 	
 	/* reset acc step angle parameters */
 	acc_step_reset_angle();
+#endif
 }
 #endif /* SENSOR_ACCELEROMETER_C_ */

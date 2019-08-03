@@ -701,7 +701,7 @@ static void on_connected(const ble_gap_evt_t * const p_gap_evt)
     NRF_LOG_INFO("Connection with link 0x%x established.", p_gap_evt->conn_handle);
 
     // Assign connection handle to available instance of QWR module.
-    for (uint32_t i = 0; i < NRF_SDH_BLE_PERIPHERAL_LINK_COUNT; i++)
+    for (uint8_t i = 0; i < NRF_SDH_BLE_PERIPHERAL_LINK_COUNT; i++)
     {
         if (m_qwr[i].conn_handle == BLE_CONN_HANDLE_INVALID)
         {
@@ -801,6 +801,9 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
                                              BLE_HCI_REMOTE_USER_TERMINATED_CONNECTION);
             APP_ERROR_CHECK(err_code);
             break;
+
+        case BLE_GATTS_EVT_HVN_TX_COMPLETE:
+        	break;
 
         default:
             // No implementation needed.
@@ -984,10 +987,14 @@ static void advertising_start(void)
  */
 bool ble_connection_status(void)
 {
-	if (m_conn_handle != BLE_CONN_HANDLE_INVALID)
-		return true;
-	else
-		return false;
+    for (uint8_t i = 0; i < NRF_SDH_BLE_PERIPHERAL_LINK_COUNT; i++)
+    {
+        if (m_qwr[i].conn_handle != BLE_CONN_HANDLE_INVALID)
+        {
+        	return true;
+        }
+    }
+	return false;
 }
 
 /**@brief Function for BLE main entry.
@@ -1139,3 +1146,4 @@ void accel_csc_meas_timeout_handler(void * p_context)
 /**
  * @}
  */
+
