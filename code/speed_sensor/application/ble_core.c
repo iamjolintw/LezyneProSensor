@@ -151,7 +151,7 @@ NRF_BLE_QWRS_DEF(m_qwr, NRF_SDH_BLE_TOTAL_LINK_COUNT);                          
 BLE_ADVERTISING_DEF(m_advertising);                                                 /**< Advertising module instance. */
 
 static uint16_t          m_conn_handle = BLE_CONN_HANDLE_INVALID;                   /**< Handle of the current connection. */
-
+static bool				complete_flag = true;										/**< Indicator for transmit complete. */
 static ble_sensor_location_t supported_locations[] =                                /**< Supported location for the sensor location. */
 {
     BLE_SENSOR_LOCATION_FRONT_WHEEL,
@@ -803,6 +803,7 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             break;
 
         case BLE_GATTS_EVT_HVN_TX_COMPLETE:
+        	complete_flag = true;
         	break;
 
         default:
@@ -1143,6 +1144,35 @@ void accel_csc_meas_timeout_handler(void * p_context)
     }
 }
 
+/**@brief Function accel_csc_meas_timeout_handler.
+ */
+uint32_t accel_csc_meas_timeout_handler2(ble_cscs_meas_t p_context)
+{
+    uint32_t        err_code = NRF_SUCCESS;
+
+    if (ble_connection_status())
+    {
+    	ble_conn_state_conn_handle_list_t conn_handles = ble_conn_state_periph_handles();
+ 		while(!complete_flag);
+ 		complete_flag = false;
+    	for (uint8_t i = 0; i < conn_handles.len; i++)
+    	{
+   			m_cscs.conn_handle = conn_handles.conn_handles[i];
+    		err_code = ble_cscs_measurement_send(&m_cscs, &p_context);
+			if ((err_code != NRF_SUCCESS) &&
+					(err_code != NRF_ERROR_INVALID_STATE) &&
+					(err_code != NRF_ERROR_RESOURCES) &&
+					(err_code != NRF_ERROR_BUSY) &&
+					(err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
+			)
+			{
+				APP_ERROR_HANDLER(err_code);
+				//NRF_LOG_INFO("accel_csc_meas_timeout_handler2: error: %x", err_code);
+    		}
+    	}
+    }
+    return err_code;
+}
 /**
  * @}
  */

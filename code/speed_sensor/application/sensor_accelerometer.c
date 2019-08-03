@@ -50,19 +50,19 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(MMA8652_TWI_INSTANC
 /* Set the debounce counter to eliminate false readings */
 #define ACCEL_FF_MT_DEBOUNCE_COUNT 				2
 /* Set compensate time */
-#define ACCEL_ANGLE_PROCESS_COMPENSATE_TIME		4		// unit:ms
+#define ACCEL_PROCESS_COMPENSATE_TIME		3		// unit:ms
 /* FIFO Event Sample Count Watermark, the value shall be less than 64 */
 #define DEF_WATERMARK_VAL 						25
 /* Minimum moving angle (degree per 0.25s (25*10ms)), degree 23 equal 2.1 Km/h (23x(1000/ACCEL_DATARATE_MS/DEF_WATERMARK_VAL)x2100*3600/360/1000) */
 #define ACCEL_MOVE_ANGLE_MIN					23
-/* Moving counter: 10 movements in 25*10ms = 2.5s time window */
-#define ACCEL_MOVE_COUNT_MIN					10
-/* Non-moving counter: (30-10)*25*10ms = 5s time window */
-#define ACCEL_MOVE_COUNT_MAX 					30
+/* Moving counter: 6 movements in 25*10ms = 1.5s time window */
+#define ACCEL_MOVE_COUNT_MIN					6
+/* Non-moving counter: (10 - 6)*25*10ms = 1.0s time window */
+#define ACCEL_MOVE_COUNT_MAX 					10
 /* Switching the threshold by different speed, this define for WHEEL_CIRCUMFERENCE_MM = 2100 mm */
-#define ACCEL_MOVE_SPEED_HIGH_MH				19000  	// 19 Km/h
-#define ACCEL_MOVE_SPEED_MED_MH					14000  	// 14 Km/h
-#define ACCEL_MOVE_SPEED_LOW_MH					2100  	// 2.1 Km/h
+#define ACCEL_MOVE_SPEED_HIGH_MH				(900*WHEEL_CIRCUMFERENCE_MM/100) //18900 = 18.9 Km/h  (degree*WHEEL_CIRCUMFERENCE_MM*3600/360/1000)
+#define ACCEL_MOVE_SPEED_MED_MH					(575*WHEEL_CIRCUMFERENCE_MM/100) //13986 = 12.0 Km/h  (degree*WHEEL_CIRCUMFERENCE_MM*3600/360/1000)
+#define ACCEL_MOVE_SPEED_LOW_MH					(100*WHEEL_CIRCUMFERENCE_MM/100) //2100  =  2.1 Km/h  (degree*WHEEL_CIRCUMFERENCE_MM*3600/360/1000)
 
 #ifdef ACCELEROMETER_SELF_ACTIVATE
 /* Set the minimum duration time to SLEEP mode, ASLP_COUNT Step = 160ms, 160ms * 10 = 1.6s */
@@ -88,9 +88,6 @@ static uint8_t 	ui8_movecnt = 0;
 static uint32_t ui32_last_lap = 0;
 /* Flag for switching the high speed algorithm or low speed algorithm */
 static bool 	acc_speed_high_flag = false;
-/* Flag for high speed and medium speed */
-static bool 	acc_speed_angle_high_flag = false;
-static bool 	acc_speed_angle_medi_flag = false;
 /* lap indicator: range: 0 ~ 8 million km */
 static uint32_t ui32_total_step = 0;
 /* State variable for zero crossing judgment */
@@ -104,7 +101,6 @@ static float last_average_weighting = 0 ;
 
 /* test purpose: FIFO dump */
 #ifdef ACCELEROMETER_DUMP_FIFO
-static uint16_t angle_sample2[DEF_WATERMARK_VAL] = {0};
 static int16_t  x_sample2[DEF_WATERMARK_VAL] = {0} ;
 static int16_t  y_sample2[DEF_WATERMARK_VAL] = {0} ;
 static int16_t  z_sample2[DEF_WATERMARK_VAL] = {0} ;
@@ -169,7 +165,7 @@ void mma8652_int2_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action
     if (ui8_int_source & SRC_FIFO_MASK)
 	{
 #ifdef SENSOR_DEBUG_OUTPUT
-    	NRF_LOG_INFO("mma8652_int2 ST:%2x, INT: %2x, SYSMOD:%2x ",ui8_status, ui8_int_source, ui8_sysmod);
+    	//NRF_LOG_INFO("mma8652_int2 ST:%2x, INT: %2x, SYSMOD:%2x ",ui8_status, ui8_int_source, ui8_sysmod);
 #endif
     	/* watermark is not full, wait until watermark is full */
     	if((ui8_status & (F_WMRK_FLAG_MASK)) != (F_WMRK_FLAG_MASK))
@@ -364,7 +360,7 @@ static ret_code_t rw_lock_set(bool config)
 {
 	if (rw_lock_protect_flag == config)
 	{
-		NRF_LOG_INFO("Warning!! Ivalid state, flag: %x, config: %x", rw_lock_protect_flag, config);
+		NRF_LOG_INFO("Warning!! Invalid state, flag: %x, config: %x", rw_lock_protect_flag, config);
 		return NRF_ERROR_INVALID_STATE;
 	}
 	else
@@ -430,14 +426,14 @@ static void accel_configuration(void)
 #else
     /* Set REG2, disable Auto-SLEEP, and High Resolution */
     accel_write_reg(MMA8652_CTRL_REG2, MOD_HIGH_RES); // without auto wake up
-    /* Set REG3, Configure Wake from Freefall/Motion interrupt, and the INT pins for Push-Pull */
+    /* Set REG3, the INT pins for Push-Pull */
     accel_write_reg(MMA8652_CTRL_REG3, IPOL_MASK);
     /* Set REG4, enable FIFO Interrupt, (do not enable Motion detection interrupt in initialization) */
     accel_write_reg(MMA8652_CTRL_REG4, INT_EN_FF_MT_MASK);
 #endif
     /* Set REG5, Motion detection Interrupt Enable mapped to INT1, and FIFO Interrupt (and Auto-SLEEP) mapped to INT2(default) */
     accel_write_reg(MMA8652_CTRL_REG5,  INT_EN_FF_MT_MASK); //Set the interrupt to route to INT1
-    /* Set REG1, Set to 20ms data rate period (50Hz), 160ms sleep datarate, non-Fast read mode (12bit). */
+    /* Set REG1, Set to 10ms data rate period (100Hz), 160ms sleep datarate, non-Fast read mode (12bit). */
     accel_write_reg(MMA8652_CTRL_REG1, ACCEL_DATARATE | ACCEL_SLEEPP_DATARATE );
 
 	/* Motion configuration and status registers */
@@ -641,14 +637,9 @@ static float lowPassExponential(float input, float average)
 void acc_read_fifodata_datadump(void)
 {
 #ifdef ACCELEROMETER_DUMP_FIFO
-	#define DEF_Z_LEVEL_SHIFT_VAL   -1.0f		// to solve the problem in low speed which has two peaks in one circulation.
 	ble_cscs_meas_t cscs_measurement;
 	uint8_t i = 0;
-	int32_t mag_xyz = 0 ;
-	//float f_average_ang[DEF_WATERMARK_VAL]= {0};
-	float ay[DEF_WATERMARK_VAL] = {0};
-	float az[DEF_WATERMARK_VAL] = {0};
-	float ax[DEF_WATERMARK_VAL] = {0};
+
 	for(i = 0; i < DEF_WATERMARK_VAL; i++)
 	{
 		static float last_ay1 = 0, last_az1 = 0 , last_ax1 = 0;
@@ -657,37 +648,31 @@ void acc_read_fifodata_datadump(void)
 		y_sample2[i] = ((int16_t)((uint16_t)((uint16_t)accel_buff[(i*6)+2]<< 8)| (uint16_t)accel_buff[(i*6)+3]));
 		z_sample2[i] = ((int16_t)((uint16_t)((uint16_t)accel_buff[(i*6)+4]<< 8)| (uint16_t)accel_buff[(i*6)+5]));
 
-		ax[i] = ((float)x_sample2[i])/(float)(ACCEL_SENSITIVITY_CONFIG*16);
-		ay[i] = ((float)y_sample2[i])/(float)(ACCEL_SENSITIVITY_CONFIG*16);
-		az[i] = ((float)z_sample2[i])/(float)(ACCEL_SENSITIVITY_CONFIG*16);
-
-		//f_average_ang[i] = (float)(atan2((double)az[i],(double)ay[i])*180/PI)+180.0;
-		//NRF_LOG_INFO( "f_average_ang0: " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(f_average_ang[i]));
-		//NRF_LOG_INFO( "X : " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(ax[i]));
-		//NRF_LOG_INFO( "Y : " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(ay[i]));
-		//NRF_LOG_INFO( "Z : " NRF_LOG_FLOAT_MARKER , NRF_LOG_FLOAT(az[i]));
-		ax[i] = lowPassExponential(ax[i], last_ax1);
-		last_ax1 = ax[i];
-		ay[i] = lowPassExponential(ay[i], last_ay1);
-		last_ay1 = ay[i];
-		az[i] = lowPassExponential(az[i], last_az1);
-		last_az1 = az[i];
-
-		az[i] += DEF_Z_LEVEL_SHIFT_VAL;  // shift -1
-		mag_xyz = (int16_t)(sqrt(ax[i] *ax[i] + az[i]*az[i]) * 1000);
+		last_ax1 = ((float)x_sample2[i])/(float)(ACCEL_SENSITIVITY_CONFIG*16);
+		last_ay1 = ((float)y_sample2[i])/(float)(ACCEL_SENSITIVITY_CONFIG*16);
+		last_az1 = ((float)z_sample2[i])/(float)(ACCEL_SENSITIVITY_CONFIG*16);
 
 		int16_t in16_ax = (int16_t)(last_ax1*1000);
 		int16_t in16_ay = (int16_t)(last_ay1*1000);
 		int16_t in16_az = (int16_t)(last_az1*1000);
 
+		//NRF_LOG_INFO( "ID: %5d: X: %d, Z: %d, mag: %d", ui32_step_sameple_counter, in16_ax, in16_az, mag_xyz);
 		cscs_measurement.is_wheel_rev_data_present = true;
 		cscs_measurement.is_crank_rev_data_present = true;
-		cscs_measurement.cumulative_wheel_revs = in16_ax;
-		cscs_measurement.cumulative_wheel_revs = in16_ay;
-		cscs_measurement.cumulative_crank_revs 	 = in16_az;
-		cscs_measurement.last_wheel_event_time = (int16_t) mag_xyz ;
-		//cscs_measurement.last_crank_event_time	 = 0x00;
-		accel_csc_meas_timeout_handler2(cscs_measurement);
+		cscs_measurement.cumulative_wheel_revs = ui32_step_sameple_counter;
+		cscs_measurement.last_wheel_event_time = (uint32_t)in16_ax;
+		cscs_measurement.cumulative_crank_revs = (uint16_t)in16_ay;
+		cscs_measurement.last_crank_event_time	 =(uint16_t)in16_az;
+		ui32_step_sameple_counter ++;
+
+		uint8_t retry_count = 0;
+		while ((accel_csc_meas_timeout_handler2(cscs_measurement) != NRF_SUCCESS))
+		{
+			nrf_delay_ms(4);
+			retry_count++;
+			if(retry_count>=3)
+				break;
+		}
 	}
 #endif
 }
@@ -697,13 +682,13 @@ void acc_read_fifodata_datadump(void)
 void acc_read_fifodata(void)
 {
 	#define DEF_Z_LEVEL_SHIFT_VAL   -1.0f		// to solve the problem in low speed which has two peaks in one circulation.
-	float f_average_ang = 0, ay = 0, az = 0, ax = 0;
-	static float last_ay = 0, last_az = 0, last_ax = 0;
-	uint8_t i= 0;
-	uint16_t angle_sample[DEF_WATERMARK_VAL] = {0};
-	float mag_accel_sample[DEF_WATERMARK_VAL] = {0};
 
-	for(i = 0; i < DEF_WATERMARK_VAL; i++)
+	static float last_ay = 0, last_az = 0, last_ax = 0;
+	float f_average_ang = 0, ay = 0, az = 0, ax = 0;
+	float mag_accel_sample[DEF_WATERMARK_VAL] = {0};
+	uint16_t angle_sample[DEF_WATERMARK_VAL] = {0};
+
+	for(uint8_t i = 0; i < DEF_WATERMARK_VAL; i++)
 	{
 		int16_t accel_xyz[3];
 		accel_xyz[0] = (int16_t)((uint16_t)((uint16_t)accel_buff[(i*6)] << 8) | (uint16_t)accel_buff[(i*6)+1]);
@@ -712,7 +697,6 @@ void acc_read_fifodata(void)
 		ax = ((float)accel_xyz[0])/(float)(ACCEL_SENSITIVITY_CONFIG*16);
 		ay = ((float)accel_xyz[1])/(float)(ACCEL_SENSITIVITY_CONFIG*16);
 		az = ((float)accel_xyz[2])/(float)(ACCEL_SENSITIVITY_CONFIG*16);
-
 		/* low pass filter */
 		ax = lowPassExponential(ax, last_ax);
 		last_ax = ax;
@@ -720,202 +704,19 @@ void acc_read_fifodata(void)
 		last_ay = ay;
 		az = lowPassExponential(az, last_az);
 		last_az = az;
-
 		/* LezyneSPD use z and y axis for calculating angle value */
 		f_average_ang = (float)(atan2((double)az,(double)ay)*180/PI)+180.0;
 		angle_sample[i] = (uint16_t)(f_average_ang + 0.5);		// round 0.4 down, round 0.5 up
-
+#if 0
 		/* LezyneSPD use z and x axis to check zero-crossing condition */
 		az += DEF_Z_LEVEL_SHIFT_VAL;  // shift -1
 		mag_accel_sample[i] = sqrt(ax*ax + az*az);
+#else
+		mag_accel_sample[i] = ay;
+#endif
 	}
 	/* processing angle and mag data */
 	acc_step_update_angle(angle_sample, mag_accel_sample);
-}
-
-/**@brief Function process accelerometer data to check zero-crossing condition.
- */
-static void acc_step_mag_update(float mag_update_value)
-{
-	/* ============= Step 0: Initialize ============= */
-	#define MAX_FILTER_WINDOW      			0.2f
-	#define MIN_FILTER_WINDOW      			0.05f
-	#define UPDATE_MAG_SAMPLE_TO_AVG      	5
-	#define AVERAGE_RESET_ZONE_COUNT		25
-
-	static float mag_raw[UPDATE_MAG_SAMPLE_TO_AVG] = {0};
-	static float max_value_in_zone = 0, min_value_in_zone = 8.0;
-	static float peakmax = 0, valleymax = 0;
-	float average_n_sample = 0;
-	float step_temp_min = 0, step_temp_max = 0, average_weighting = 0;
-	static float last_temp_min = 0, last_temp_max = 0;
-	uint8_t i = 0;
-
-	if(ui32_step_sameple_counter == 0) // initiate default value
-	{
-		last_temp_min = mag_update_value;
-		last_temp_max = mag_update_value;
-		peakmax = mag_update_value;
-		valleymax = mag_update_value;
-		last_average_weighting =  mag_update_value;
-		for(i = 0; i < UPDATE_MAG_SAMPLE_TO_AVG; i++)
-		{
-			mag_raw[i] = mag_update_value;
-		}
-	}
-	else
-	{
-		mag_raw[(ui32_step_sameple_counter%UPDATE_MAG_SAMPLE_TO_AVG)] = mag_update_value;
-	}
-
-	/* ============= Step 1: raw data processing ============= */
-	ui32_step_sameple_counter ++;
-	/* take average of N sample */
-	for(i = 0; i < UPDATE_MAG_SAMPLE_TO_AVG; i++)
-		average_n_sample += mag_raw[i];
-	average_n_sample = (float)(average_n_sample /UPDATE_MAG_SAMPLE_TO_AVG);
-
-	/* take the medium with the previous samples */
-	average_weighting = (last_average_weighting + last_average_weighting + last_average_weighting + average_n_sample) / 4.0;
-
-	/* record lowest value in AVERAGE_RESET_ZONE_COUNT samples */
-    if(average_n_sample < min_value_in_zone)
-    {
-    	min_value_in_zone = average_n_sample;
-    }
-
-    /* record highest value in AVERAGE_RESET_ZONE_COUNT samples */
-    if(average_n_sample > max_value_in_zone)
-    {
-        max_value_in_zone = average_n_sample;
-    }
-
-    /* get the window */
-    if(acc_speed_high_flag == true )
-    {
-    	if(mag_update_value > average_weighting)  // rising edge
-    	{
-    		step_temp_min = ((last_temp_min + last_temp_min + last_temp_min + average_weighting)/4);
-    		step_temp_max = ((last_temp_max + average_weighting + mag_update_value)/3);
-    	}
-    	else	// falling edge
-    	{
-    		step_temp_max = ((last_temp_max + last_temp_max + last_temp_max + average_weighting)/4);
-    		step_temp_min = ((last_temp_min + average_weighting + mag_update_value)/3);
-    	}
-    	last_average_weighting = average_weighting;
-    	last_temp_min = step_temp_min;
-    	last_temp_max = step_temp_max;
-    }
-    /* set variable every AVERAGE_RESET_ZONE_COUNT samples in the low speed algorithm */
-    else if((ui32_step_sameple_counter % AVERAGE_RESET_ZONE_COUNT) == 0)
-	{
-		float zone_max_min_delta = max_value_in_zone - min_value_in_zone;
-		average_weighting = (min_value_in_zone + max_value_in_zone) / 2.0;
-		average_weighting = (average_weighting + last_average_weighting + average_n_sample) / 3.0;
-		if (ui8_movecnt < ACCEL_MOVE_COUNT_MAX)  // case: stationary state
-		{
-			step_temp_max = ACCELEROMETER_INITIATIVE_MAX_LEVEL0;
-			step_temp_min = ACCELEROMETER_INITIATIVE_MIN_LEVEL0;
-		}
-		else if(zone_max_min_delta > (2 * MAX_FILTER_WINDOW) && acc_speed_angle_medi_flag) // case: middle speed
-		{
-			step_temp_min = ((min_value_in_zone + MAX_FILTER_WINDOW + average_weighting + last_temp_min)/3);
-			step_temp_max = ((max_value_in_zone - MAX_FILTER_WINDOW + average_weighting + last_temp_max)/3);
-		}
-		else // case: low speed
-		{
-			step_temp_max = ACCELEROMETER_INITIATIVE_MAX_LEVEL0;
-			step_temp_min = ACCELEROMETER_INITIATIVE_MIN_LEVEL0;
-		}
-		last_average_weighting = average_weighting;
-		last_temp_min = step_temp_min;
-		last_temp_max = step_temp_max;
-		min_value_in_zone = 8.0;
-		max_value_in_zone = 0.0;
-	}
-    else
-    {
-    	average_weighting = last_average_weighting;
-    	step_temp_max = last_temp_max;
-    	step_temp_min = last_temp_min;
-    }
-
-    /* ============= Step 2: State machine for zero crossing ============= */
-	switch(step_state)
-	{
-		case eSTEP_RESET:
-		{
-			if((ui32_step_sameple_counter > AVERAGE_RESET_ZONE_COUNT))
-			{
-				step_state = eSTEP_START_PEAK;
-				valleymax = step_temp_min;
-				peakmax = step_temp_max;
-			}
-		}
-		break;
-
-		case eSTEP_START_PEAK:
-		{
-			if((average_n_sample > step_temp_max) && (average_n_sample < peakmax) && ((step_temp_max - step_temp_min) > MIN_FILTER_WINDOW))
-			{
-				valleymax = average_n_sample;
-				step_state = eSTEP_PEAK_DETECT;
-			}
-			else if(mag_update_value > peakmax)
-			{
-				peakmax = average_n_sample;
-			}
-		}
-		break;
-
-		case eSTEP_PEAK_DETECT:
-		{
-			if(average_n_sample < step_temp_min)
-			{
-				step_state = eSTEP_STRAT_VALLEY;
-				valleymax = average_n_sample;
-			}
-			else if (average_n_sample >= peakmax)
-			{
-				peakmax = average_n_sample;
-			}
-		}
-		break;
-
-		case eSTEP_STRAT_VALLEY:
-		{
-			if((average_n_sample > valleymax))
-			{
-				step_state = eSTEP_STEP_DETECT;
-			}
-			else
-			{
-				valleymax = average_n_sample;
-			}
-		}
-		break;
-
-		case eSTEP_STEP_DETECT:
-		{
-			if((average_n_sample >step_temp_max))
-			{
-				ui32_total_step++;
-				ui32_step_detect_number = ui32_step_sameple_counter;
-				valleymax = step_temp_min;
-				peakmax = step_temp_max;
-				step_state = eSTEP_START_PEAK;
-			}
-			else if(average_n_sample < valleymax)
-			{
-				valleymax = average_n_sample;
-			}
-		}
-		break;
-
-		default:
-			break;
-	}
 }
 
 /**@brief Function acc_step_update_angle process accelerometer angular data to lap and total angle.
@@ -926,16 +727,16 @@ static void acc_step_update_angle(uint16_t *angle_array, float *mag_array)
 	uint16_t last_angle = angle_array[DEF_WATERMARK_VAL-1];
 	int16_t current_angle = 0, temp_angle_diff = 0;
 
+	rw_lock_set(true);	// protect the global variable
 	/* ticks time */
 	static uint32_t last_ticks = 0;
 	uint32_t ticks_current = app_timer_cnt_get();
 	uint32_t diff_ticks = (ticks_current > last_ticks)? (ticks_current - last_ticks) : (ticks_current + 0xFFFFFF - last_ticks);
-	uint32_t diff_time = (ROUNDED_DIV((diff_ticks * 1000), APP_TIMER_CLOCK_FREQ))+ ACCEL_ANGLE_PROCESS_COMPENSATE_TIME;
+	uint32_t diff_time = (ROUNDED_DIV((diff_ticks * 1000), APP_TIMER_CLOCK_FREQ))+ ACCEL_PROCESS_COMPENSATE_TIME;
 
-	rw_lock_set(true);	// protect the global varible
 	for(i = 0; i < DEF_WATERMARK_VAL ; i++)
 	{
-		/* 25 mag samples processing */
+		/* 25 accelerometer samples to check zero-crossing condition */
 		acc_step_mag_update(mag_array[i]);
 
 		/* 25 angular samples processing */
@@ -979,7 +780,7 @@ static void acc_step_update_angle(uint16_t *angle_array, float *mag_array)
 		{
 			return;
 		}
-		else if( ui8_movecnt < ACCEL_MOVE_COUNT_MIN) 	// moving -> stop, counter less minimun stop requirement.
+		else if( ui8_movecnt < ACCEL_MOVE_COUNT_MIN) 	// moving -> stop, counter less minimum stop requirement.
 		{
 			ui8_movecnt = 0;
 			return;
@@ -994,7 +795,6 @@ static void acc_step_update_angle(uint16_t *angle_array, float *mag_array)
 			{
 				ui8_movecnt--;
 			}
-			return;
 		}
 	}
 	else										// speed >= 2.0kmh
@@ -1013,6 +813,7 @@ static void acc_step_update_angle(uint16_t *angle_array, float *mag_array)
 			ui8_movecnt = ACCEL_MOVE_COUNT_MAX;
 		}
 	} /*end of movement detection*/
+
 }
 
 /**@brief Function acc_step_reset_angle reset to default value.
@@ -1023,6 +824,113 @@ void acc_step_reset_angle(void)
     ui16_total_time = 0;
     step_state = eSTEP_RESET;
     ui32_step_sameple_counter = 0;
+}
+
+/**@brief Function process accelerometer data to check zero-crossing condition.
+ */
+static void acc_step_mag_update(float mag_update_value)
+{
+	/* ============= Step 0: Initialize ============= */
+	#define MAX_FILTER_WINDOW      			0.1f
+	#define AVERAGE_ALPHA_FACTOR			0.01f
+	static float peakmax = 0, valleymax = 0;
+	float step_temp_min = 0, step_temp_max = 0, average_weighting = 0;
+
+	if(ui32_step_sameple_counter == 0) // initiate default value
+	{
+		last_average_weighting =  mag_update_value;
+		ui32_step_sameple_counter ++;
+		return;
+	}
+
+	//#low pass filter
+	average_weighting = last_average_weighting + AVERAGE_ALPHA_FACTOR *(mag_update_value - last_average_weighting);
+	step_temp_min = average_weighting - MAX_FILTER_WINDOW;
+	step_temp_max = average_weighting + MAX_FILTER_WINDOW;
+	last_average_weighting = average_weighting;
+#ifdef SENSOR_DEBUG_OUTPUT
+	NRF_LOG_INFO("mag_update_value: %d, average_weighting: %d, min: %d, max: %d", (int16_t)(mag_update_value*1000),(int16_t)(average_weighting*1000),(int16_t)(step_temp_min*1000),(int16_t)(step_temp_max*1000));
+#endif
+
+	/* ============= Step 2: State machine for zero crossing ============= */
+	switch(step_state)
+	{
+		case eSTEP_RESET:
+		{
+			if((ui8_movecnt > ACCEL_MOVE_COUNT_MIN)) // start moving
+			{
+				step_state = eSTEP_START_PEAK;
+				valleymax = step_temp_min;
+				peakmax = step_temp_max;
+			}
+		}
+		break;
+
+		case eSTEP_START_PEAK:
+		{
+			if((mag_update_value > step_temp_max) && (mag_update_value < peakmax))
+			{
+				valleymax = mag_update_value;
+				step_state = eSTEP_PEAK_DETECT;
+			}
+			else if(mag_update_value > peakmax)
+			{
+				peakmax = mag_update_value;
+			}
+		}
+		break;
+
+		case eSTEP_PEAK_DETECT:
+		{
+			if(mag_update_value < step_temp_min)
+			{
+				step_state = eSTEP_STRAT_VALLEY;
+				valleymax = mag_update_value;
+			}
+			else if (mag_update_value >= peakmax)
+			{
+				peakmax = mag_update_value;
+			}
+		}
+		break;
+
+		case eSTEP_STRAT_VALLEY:
+		{
+			if((mag_update_value > valleymax))
+			{
+				step_state = eSTEP_STEP_DETECT;
+			}
+			else
+			{
+				valleymax = mag_update_value;
+			}
+		}
+		break;
+
+		case eSTEP_STEP_DETECT:
+		{
+			if((mag_update_value >step_temp_max))
+			{
+				ui32_total_step++;
+				ui32_step_detect_number = ui32_step_sameple_counter;
+				valleymax = step_temp_min;
+				peakmax = step_temp_max;
+				step_state = eSTEP_START_PEAK;
+			}
+			else if(mag_update_value < valleymax)
+			{
+				valleymax = mag_update_value;
+			}
+		}
+		break;
+
+		default:
+			break;
+	}
+#ifdef SENSOR_DEBUG_OUTPUT
+	NRF_LOG_INFO("step_state: %d, peakmax: %d, valleymax: %d", step_state,(int16_t)(peakmax*1000),(int16_t)(valleymax*1000));
+#endif
+	ui32_step_sameple_counter ++;
 }
 
 /**@brief Function for Simple accelerometer offset calibration.
@@ -1061,17 +969,13 @@ void accel_calibration(void)
  */
 ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 {
-	#define ACCEL_ENTER_LOW_SPEED_STATE_FACTOR				16
-	#define ACCEL_ENTER_HIGH_SPEED_STATE_DEBOUNCE_FACTOR 	2
 	#define ACCEL_EVENT_TIME_FACTOR 						1.024f
 
     static uint16_t ui16_last_total_time = 0, ui16_last_event_time = 0;	// total time is 1000-based, event time is 1024-based time
-    static uint16_t average_speed_kmh = 0;
     static uint32_t ui32_last_step_sameple = 0, ui32_last_step_detect = 0;
-    static uint8_t changing_algorithm_lap = 0, acc_speed_debounce_count = 0;
 
     uint16_t event_time_inc = 0, total_time_diff = 0, ui16_wheel_event_time = 0;			// event time is 1024-based time
-   	uint16_t current_lap = 0;
+   	uint16_t current_lap = 0, average_speed_kmh = 0;
     uint16_t current_sample = 0;
 
     if(rw_lock_get())	// if rw_lock is ture means the critical global variable is updating.
@@ -1079,11 +983,23 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
     	NRF_LOG_INFO("Warning!!! Read and Write collision, skip report");
     	return NRF_ERROR_INVALID_STATE;
     }
-    else if((ui8_movecnt > 0)) // if still moving
+    else if((ui8_movecnt > 0) && !acc_speed_high_flag) // if still moving
     {
     	/* if the lap remains unchanged and speed low than 2.1km, do not send CSC report */
     	if((ui32_last_lap == ui32_total_step))
     	{
+#ifdef SENSOR_DEBUG_OUTPUT
+    		NRF_LOG_INFO("accel_csc_measurement(): lap without change, skip report");
+
+			ble_cscs_meas_t cscs_measurement;
+			cscs_measurement.is_wheel_rev_data_present = true;
+			cscs_measurement.is_crank_rev_data_present = true;
+			cscs_measurement.cumulative_wheel_revs = 0xAAAAAAAA;
+			cscs_measurement.last_wheel_event_time = 0xAAAA;
+			cscs_measurement.cumulative_crank_revs = (uint16_t)(0XAAAA);
+			cscs_measurement.last_crank_event_time = (uint16_t)(ui8_movecnt);
+			accel_csc_meas_timeout_handler2(cscs_measurement);
+#endif
     		return NRF_ERROR_INVALID_STATE;
     	}
     }
@@ -1092,29 +1008,17 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 
 	/* step based time event calculation*/
 	current_sample = (uint16_t)(ui32_step_detect_number - ui32_last_step_detect);
-	event_time_inc = (uint16_t)((float)(current_sample *(total_time_diff/( ui32_step_sameple_counter - ui32_last_step_sameple)))*ACCEL_EVENT_TIME_FACTOR);
-	if(event_time_inc !=0)
-	{
-		ui16_wheel_event_time =  ui16_last_event_time + event_time_inc;			// do not take care warps around case.
-	}
-	else
-	{
-		ui16_wheel_event_time = (ui16_total_time * ACCEL_EVENT_TIME_FACTOR);	// no move case, need update latest event time (changing to 1024-based)
-	}
+	event_time_inc = (uint16_t)((float)(current_sample *((float)total_time_diff/(float)(ui32_step_sameple_counter - ui32_last_step_sameple)))*ACCEL_EVENT_TIME_FACTOR);
+	ui16_wheel_event_time = (event_time_inc != 0)? ui16_last_event_time + event_time_inc : (ui16_total_time * ACCEL_EVENT_TIME_FACTOR);
+
+	/* speed calculation */
 	current_lap = ui32_total_step - ui32_last_lap;
-	if (changing_algorithm_lap > current_lap)  // since changing algorithm could lose lap, here to add compensation
-	{
-		current_lap = (changing_algorithm_lap + current_lap)/2;
-		changing_algorithm_lap = 0;
-	}
 	/* average speed = current lap * circumference (mm) * 36000(s) / ((wheel event - last event time)/1024*1000) */
 	average_speed_kmh = (float)(current_lap * DEF_ANGLE_360_DEGREE * ANGLE_SPEED_TO_METER_PER_HOUR *ACCEL_EVENT_TIME_FACTOR/ (event_time_inc));
 
 	/* speed check */
 	if(average_speed_kmh > ACCEL_MOVE_SPEED_HIGH_MH)
 	{
-		acc_speed_angle_high_flag = true;
-		acc_speed_angle_medi_flag = false;
 		if(!acc_speed_high_flag)
 		{
 			acc_speed_high_flag = true;
@@ -1122,39 +1026,24 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 	}
 	else if(average_speed_kmh > ACCEL_MOVE_SPEED_MED_MH)
 	{
-		acc_speed_angle_high_flag = true;
-		acc_speed_angle_medi_flag = true;
-		if(acc_speed_high_flag)
-		{
-			if(acc_speed_debounce_count > ACCEL_ENTER_HIGH_SPEED_STATE_DEBOUNCE_FACTOR)
-			{
-				acc_speed_high_flag = false;
-				changing_algorithm_lap = current_lap ;
-			}
-			else
-			{
-				acc_speed_debounce_count++;
-			}
-		}
-		else
-		{
-			acc_speed_debounce_count = 0;
-		}
+		// Do nothing
 	}
 	else
 	{
-		acc_speed_angle_high_flag = false;
-		acc_speed_angle_medi_flag = false;
+		if(acc_speed_high_flag)
+		{
+			acc_speed_high_flag = false;
+		}
 	}
 
 	p_measurement->is_wheel_rev_data_present = true;
 	p_measurement->is_crank_rev_data_present = false;
 	p_measurement->cumulative_wheel_revs = ui32_total_step;
 	p_measurement->last_wheel_event_time = (uint16_t)ui16_wheel_event_time;
-#if 0
+#ifdef SENSOR_DEBUG_OUTPUT
 	/* for test log */
 	p_measurement->is_crank_rev_data_present = true;
-	p_measurement->cumulative_crank_revs 	 = (uint16_t)((acc_speed_angle_high_flag &&0x0F)|((acc_speed_angle_medi_flag&0x0F)<<4));
+	p_measurement->cumulative_crank_revs 	 = (uint16_t)(current_sample);
 	p_measurement->last_crank_event_time	 = (uint16_t)(average_speed_kmh/100);
 #endif
 	/* last lap depend on angle mode or step mode */
@@ -1163,7 +1052,10 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 	ui32_last_step_detect = ui32_step_detect_number;
 	ui16_last_event_time = ui16_wheel_event_time;
 	ui16_last_total_time = ui16_total_time;
-
+#ifdef SENSOR_DEBUG_OUTPUT
+	NRF_LOG_INFO("current_sample: %d, event_time: %d, total_time_diff: %d, Speed: %d kmh", current_sample, ui16_wheel_event_time , total_time_diff, average_speed_kmh);
+	NRF_LOG_INFO("sameple_counter: %d, step_detect_num: %d, event_time_inc: %d", ui32_step_sameple_counter, ui32_step_detect_number, event_time_inc );
+#endif
     return NRF_SUCCESS;
 }
 
@@ -1179,22 +1071,18 @@ void accel_init(void)
 	/* configuration */
 	accel_configuration();
 #endif
-
 	/* timer init */
 	accel_timers_init();
 
-#if defined ACCELEROMETER_SELF_TIMEOUT | defined CSCS_MOCK_ENABLE
-#ifndef ACCELEROMETER_DUMP_FIFO
+#if (defined(ACCELEROMETER_SELF_TIMEOUT) && !defined(ACCELEROMETER_DUMP_FIFO))|| defined(CSCS_MOCK_ENABLE)
 	application_timers_start();
-#endif
 #endif
 
 #ifndef CSCS_MOCK_ENABLE
 	/* enable gpio */
 	accel_i2c_gpio_enable();
-	
+#endif
 	/* reset acc step angle parameters */
 	acc_step_reset_angle();
-#endif
 }
 #endif /* SENSOR_ACCELEROMETER_C_ */
