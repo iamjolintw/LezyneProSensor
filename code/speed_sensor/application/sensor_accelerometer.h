@@ -109,6 +109,6 @@ ret_code_t 	accel_task_enable_mask(t_accel_task_pending enable);
 void 		acc_read_fifodata(void);
 void 		acc_read_fifodata_datadump(void);
 void 		acc_step_reset_angle(void);
-ret_code_t 		accel_csc_measurement(ble_cscs_meas_t * p_measurement);
+ret_code_t 	accel_csc_measurement(ble_cscs_meas_t * p_measurement);
 
 #endif /* SENSOR_ACCELEROMETER_H_ */

@@ -42,7 +42,7 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(MMA8652_TWI_INSTANC
 /* Data rate 10ms = 100Hz, the highest bicycle speed = 75 Km/h = 20.83 m/s,
    max RPM = 20.83 / 2m (circumference) = 10.41 Hz, but needs at least 4 samples for calculation = 41.64 Hz ~= 50Hz */
 #define ACCEL_DATARATE  						DATA_RATE_10MS //DATA_RATE_20MS
-#define ACCEL_DATARATE_MS						10 //20			/* ACCEL_DATARATE_MS shall match to ACCEL_DATARATE */
+#define ACCEL_DATARATE_MS						10//20			/* ACCEL_DATARATE_MS shall match to ACCEL_DATARATE */
 /* ASLP_RATE_160MS = 6.25 hz */
 #define ACCEL_SLEEPP_DATARATE					ASLP_RATE_160MS
 /* Threshold = 0x08; The step count is 0.063g/ count,  (0.5g/0.063g = 7.9) */
@@ -50,7 +50,7 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(MMA8652_TWI_INSTANC
 /* Set the debounce counter to eliminate false readings */
 #define ACCEL_FF_MT_DEBOUNCE_COUNT 				2
 /* Set compensate time */
-#define ACCEL_PROCESS_COMPENSATE_TIME		3		// unit:ms
+#define ACCEL_PROCESS_COMPENSATE_TIME			3		// unit:ms
 /* FIFO Event Sample Count Watermark, the value shall be less than 64 */
 #define DEF_WATERMARK_VAL 						25
 /* Minimum moving angle (degree per 0.25s (25*10ms)), degree 23 equal 2.1 Km/h (23x(1000/ACCEL_DATARATE_MS/DEF_WATERMARK_VAL)x2100*3600/360/1000) */
@@ -119,7 +119,7 @@ static void 		accel_config_fifo_int(bool enable);
 static void 		accel_config_motion_int(bool enable);
 static void 		accel_wake_up(void);
 static void 		accel_standby(void);
-static float 		lowPassExponential(float input, float average);
+static float 		lowPassExponential(float input, float average, float factor);
 static ret_code_t 	rw_lock_set(bool config);
 static bool 		rw_lock_get(void);
 static void 		accel_display_reg(void);
@@ -389,9 +389,9 @@ static void accel_configuration(void)
 
 	/* read WHO_AND_I first */
 	accel_read_reg(MMA8652_WHO_AM_I, &who_n_i);
-	if(who_n_i != MMA8652_WHO_AM_I_OUT )
+	if(who_n_i != MMA8652_WHO_AM_I_OUT)
 	{
-		NRF_LOG_ERROR(" Device ID not match!! :MMA8652 0x4A: 0x%x", who_n_i );
+		NRF_LOG_ERROR(" Device ID not match!! :MMA8652 0x4A: 0x%x", who_n_i);
 		return;
 	}
 
@@ -416,13 +416,13 @@ static void accel_configuration(void)
 	accel_write_reg(MMA8652_F_SETUP, DEF_WATERMARK_VAL);
 #ifdef ACCELEROMETER_SELF_ACTIVATE
 	/* Set REG2, enable Auto-SLEEP and High Resolution */
-    accel_write_reg(MMA8652_CTRL_REG2, MOD_HIGH_RES|SLPE_MASK);
+    accel_write_reg(MMA8652_CTRL_REG2, MOD_HIGH_RES | SLPE_MASK);
     /* Set REG3, Configure Wake from Freefall/Motion interrupt, and the INT pins for Push-Pull */
-    accel_write_reg(MMA8652_CTRL_REG3, WAKE_FF_MT_MASK|IPOL_MASK);
+    accel_write_reg(MMA8652_CTRL_REG3, WAKE_FF_MT_MASK | IPOL_MASK);
     /* Set REG4, enable Auto-SLEEP/WAKE Interrupt and the FIFO Interrupt, (enable Motion detection interrupt in initialization) */
     accel_write_reg(MMA8652_CTRL_REG4, INT_EN_ASLP_MASK | INT_EN_FF_MT_MASK);
 	/* set ASLP_COUNT, setup sleep counter ACCEL_ENTER_SLEEP_COUNTER */
-	accel_write_reg(MMA8652_ASLP_COUNT, ACCEL_ENTER_SLEEP_COUNTER );
+	accel_write_reg(MMA8652_ASLP_COUNT, ACCEL_ENTER_SLEEP_COUNTER);
 #else
     /* Set REG2, disable Auto-SLEEP, and High Resolution */
     accel_write_reg(MMA8652_CTRL_REG2, MOD_HIGH_RES); // without auto wake up
@@ -434,19 +434,19 @@ static void accel_configuration(void)
     /* Set REG5, Motion detection Interrupt Enable mapped to INT1, and FIFO Interrupt (and Auto-SLEEP) mapped to INT2(default) */
     accel_write_reg(MMA8652_CTRL_REG5,  INT_EN_FF_MT_MASK); //Set the interrupt to route to INT1
     /* Set REG1, Set to 10ms data rate period (100Hz), 160ms sleep datarate, non-Fast read mode (12bit). */
-    accel_write_reg(MMA8652_CTRL_REG1, ACCEL_DATARATE | ACCEL_SLEEPP_DATARATE );
+    accel_write_reg(MMA8652_CTRL_REG1, ACCEL_DATARATE | ACCEL_SLEEPP_DATARATE);
 
 	/* Motion configuration and status registers */
 	/* Set MMA8652_FF_MT_CFG, setup motion event after the debounce counter time is reached, ELE = 0, OAE = 1, Event flag enable on X and Z*/
-	accel_write_reg(MMA8652_FF_MT_CFG, OAE_MASK|ZEFE_MASK );
+	accel_write_reg(MMA8652_FF_MT_CFG, OAE_MASK | ZEFE_MASK);
 	/* Set MMA8652_FF_MT_THS, setup THS = ACCEL_FF_MT_THS_VALUE */
-	accel_write_reg(MMA8652_FF_MT_THS, ACCEL_FF_MT_THS_VALUE | DBCNTM_MASK );
+	accel_write_reg(MMA8652_FF_MT_THS, ACCEL_FF_MT_THS_VALUE | DBCNTM_MASK);
 	/* Set MMA8652_FF_MT_COUNT, setup debounce counter ACCEL_FF_MT_DEBOUNCE_COUNT */
-	accel_write_reg(MMA8652_FF_MT_COUNT, ACCEL_FF_MT_DEBOUNCE_COUNT );
+	accel_write_reg(MMA8652_FF_MT_COUNT, ACCEL_FF_MT_DEBOUNCE_COUNT);
 
 	/* Turn off HPF for Data Out and set 8g Mode, SENSITIVITY_8G */
-	accel_write_reg(MMA8652_XYZ_DATA_CFG, ACCEL_FULL_SCALE_REG );
-
+	accel_write_reg(MMA8652_XYZ_DATA_CFG, ACCEL_FULL_SCALE_REG);
+	accel_write_reg(MMA8652_HP_FILTER_CUTOFF, PULSE_LPF_EN_MASK | PULSE_HPF_BYP_MASK);
     /* Set back to active and wake up */
 	accel_display_reg();
 	accel_wake_up();
@@ -542,15 +542,6 @@ static ret_code_t accel_i2c_gpio_init (void)
     ret_code_t err_code = nrf_drv_twi_init(&acce_m_twi, &twi_config, NULL, NULL);
     APP_ERROR_CHECK(err_code);
     nrf_drv_twi_enable(&acce_m_twi);
-
-    /* GPIO Initialize */
-    nrf_drv_gpiote_in_config_t in_config1 = GPIOTE_CONFIG_IN_SENSE_HITOLO(false);
-	err_code = nrf_drv_gpiote_in_init(MMA8652_INT1_PIN, &in_config1, mma8652_int1_handler);
-	APP_ERROR_CHECK(err_code);
-	nrf_drv_gpiote_in_config_t in_config2 = GPIOTE_CONFIG_IN_SENSE_TOGGLE(true);
-    err_code = nrf_drv_gpiote_in_init(MMA8652_INT2_PIN, &in_config2, mma8652_int2_handler);
-    APP_ERROR_CHECK(err_code);
-
 	return err_code;
 }
 
@@ -558,6 +549,19 @@ static ret_code_t accel_i2c_gpio_init (void)
  */
 static void accel_i2c_gpio_enable (void)
 {
+    /* GPIO Initialize */
+#if 0
+    nrf_drv_gpiote_in_config_t in_config1 = GPIOTE_CONFIG_IN_SENSE_HITOLO(false);
+	err_code = nrf_drv_gpiote_in_init(MMA8652_INT1_PIN, &in_config1, mma8652_int1_handler);
+#else
+    nrf_drv_gpiote_in_config_t in_config1 = GPIOTE_CONFIG_IN_SENSE_LOTOHI(false);
+    ret_code_t err_code = nrf_drv_gpiote_in_init(MMA8652_INT1_PIN, &in_config1, mma8652_int1_handler);
+#endif
+	APP_ERROR_CHECK(err_code);
+	nrf_drv_gpiote_in_config_t in_config2 = GPIOTE_CONFIG_IN_SENSE_TOGGLE(true);
+    err_code = nrf_drv_gpiote_in_init(MMA8652_INT2_PIN, &in_config2, mma8652_int2_handler);
+    APP_ERROR_CHECK(err_code);
+
 	nrf_drv_gpiote_in_event_enable(MMA8652_INT2_PIN, true);
 	nrf_drv_gpiote_in_event_enable(MMA8652_INT1_PIN, true);
 	NVIC_EnableIRQ(GPIOTE_IRQn);
@@ -624,12 +628,11 @@ void accel_standby(void)
 }
 
 /**@brief Function lowPassExponential fifo accelerometer data.
- *	read numbers of DEF_WATERMARK_VAL from accel_buff[], and turn into DEF_WATERMARK_VAL angular samples
+ *	ensure factor belongs to  [0,1]
  */
-static float lowPassExponential(float input, float average)
+static float lowPassExponential(float input, float average, float factor)
 {
-	#define LOW_PASS_FACTOR 0.90 // ensure factor belongs to  [0,1]
-    return input*LOW_PASS_FACTOR + (1-LOW_PASS_FACTOR)*average;
+    return (average + factor * (input - average));
 }
 
 /**@brief Function for dump x,y,z g x 1000 value to ota.
@@ -681,10 +684,12 @@ void acc_read_fifodata_datadump(void)
  */
 void acc_read_fifodata(void)
 {
-	#define DEF_Z_LEVEL_SHIFT_VAL   -1.0f		// to solve the problem in low speed which has two peaks in one circulation.
+	#define LOW_PASS_FACTOR 	0.3 // ensure factor belongs to  [0,1]
 
-	static float last_ay = 0, last_az = 0, last_ax = 0;
-	float f_average_ang = 0, ay = 0, az = 0, ax = 0;
+	static float last_ay = 0, last_az = 0;
+	float f_average_ang = 0, ay = 0, az = 0;
+	//static float last_ax = 0;
+	//float ax = 0;
 	float mag_accel_sample[DEF_WATERMARK_VAL] = {0};
 	uint16_t angle_sample[DEF_WATERMARK_VAL] = {0};
 
@@ -694,26 +699,21 @@ void acc_read_fifodata(void)
 		accel_xyz[0] = (int16_t)((uint16_t)((uint16_t)accel_buff[(i*6)] << 8) | (uint16_t)accel_buff[(i*6)+1]);
 		accel_xyz[1] = (int16_t)((uint16_t)((uint16_t)accel_buff[(i*6)+2] << 8) | (uint16_t)accel_buff[(i*6)+3]);
 		accel_xyz[2] = (int16_t)((uint16_t)((uint16_t)accel_buff[(i*6)+4] << 8) | (uint16_t)accel_buff[(i*6)+5]);
-		ax = ((float)accel_xyz[0])/(float)(ACCEL_SENSITIVITY_CONFIG*16);
+		//ax = ((float)accel_xyz[0])/(float)(ACCEL_SENSITIVITY_CONFIG*16);
 		ay = ((float)accel_xyz[1])/(float)(ACCEL_SENSITIVITY_CONFIG*16);
 		az = ((float)accel_xyz[2])/(float)(ACCEL_SENSITIVITY_CONFIG*16);
 		/* low pass filter */
-		ax = lowPassExponential(ax, last_ax);
-		last_ax = ax;
-		ay = lowPassExponential(ay, last_ay);
+		//ax = lowPassExponential(ax, last_ax, LOW_PASS_FACTOR);
+		//last_ax = ax;
+		ay = lowPassExponential(ay, last_ay, LOW_PASS_FACTOR);
 		last_ay = ay;
-		az = lowPassExponential(az, last_az);
+		az = lowPassExponential(az, last_az, LOW_PASS_FACTOR);
 		last_az = az;
 		/* LezyneSPD use z and y axis for calculating angle value */
 		f_average_ang = (float)(atan2((double)az,(double)ay)*180/PI)+180.0;
 		angle_sample[i] = (uint16_t)(f_average_ang + 0.5);		// round 0.4 down, round 0.5 up
-#if 0
-		/* LezyneSPD use z and x axis to check zero-crossing condition */
-		az += DEF_Z_LEVEL_SHIFT_VAL;  // shift -1
-		mag_accel_sample[i] = sqrt(ax*ax + az*az);
-#else
+		/* LezyneSPD use y axis to check zero-crossing condition */
 		mag_accel_sample[i] = ay;
-#endif
 	}
 	/* processing angle and mag data */
 	acc_step_update_angle(angle_sample, mag_accel_sample);
@@ -831,10 +831,11 @@ void acc_step_reset_angle(void)
 static void acc_step_mag_update(float mag_update_value)
 {
 	/* ============= Step 0: Initialize ============= */
-	#define MAX_FILTER_WINDOW      			0.1f
-	#define AVERAGE_ALPHA_FACTOR			0.01f
+	#define MAX_FILTER_WINDOW      			0.15f
+	#define AVERAGE_ALPHA_FACTOR			0.05f
+
 	static float peakmax = 0, valleymax = 0;
-	float step_temp_min = 0, step_temp_max = 0, average_weighting = 0;
+	float step_temp_min = 0, step_temp_max = 0;
 
 	if(ui32_step_sameple_counter == 0) // initiate default value
 	{
@@ -842,12 +843,10 @@ static void acc_step_mag_update(float mag_update_value)
 		ui32_step_sameple_counter ++;
 		return;
 	}
-
 	//#low pass filter
-	average_weighting = last_average_weighting + AVERAGE_ALPHA_FACTOR *(mag_update_value - last_average_weighting);
-	step_temp_min = average_weighting - MAX_FILTER_WINDOW;
-	step_temp_max = average_weighting + MAX_FILTER_WINDOW;
-	last_average_weighting = average_weighting;
+	last_average_weighting = lowPassExponential(mag_update_value, last_average_weighting, AVERAGE_ALPHA_FACTOR);
+	step_temp_min = last_average_weighting - MAX_FILTER_WINDOW;
+	step_temp_max = last_average_weighting + MAX_FILTER_WINDOW;
 #ifdef SENSOR_DEBUG_OUTPUT
 	NRF_LOG_INFO("mag_update_value: %d, average_weighting: %d, min: %d, max: %d", (int16_t)(mag_update_value*1000),(int16_t)(average_weighting*1000),(int16_t)(step_temp_min*1000),(int16_t)(step_temp_max*1000));
 #endif
@@ -1070,6 +1069,12 @@ void accel_init(void)
 
 	/* configuration */
 	accel_configuration();
+
+#ifndef CSCS_MOCK_ENABLE
+	/* enable gpio */
+	accel_i2c_gpio_enable();
+#endif
+
 #endif
 	/* timer init */
 	accel_timers_init();
@@ -1078,10 +1083,6 @@ void accel_init(void)
 	application_timers_start();
 #endif
 
-#ifndef CSCS_MOCK_ENABLE
-	/* enable gpio */
-	accel_i2c_gpio_enable();
-#endif
 	/* reset acc step angle parameters */
 	acc_step_reset_angle();
 }

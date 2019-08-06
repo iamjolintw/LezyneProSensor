@@ -35,8 +35,8 @@
 #define MAX_CONN_INTERVAL               MSEC_TO_UNITS(MIN_CONNECTION_INTERVAL+15,	UNIT_1_25_MS)        /**< Maximum acceptable connection interval. */
 
 //#define APP_ADV_INTERVAL              40                                          /**< The advertising interval (in units of 0.625 ms. This value corresponds to 25 ms). */
-#define APP_ADV_INTERVAL                (100/0.625)                                 /**< The advertising interval (in units of 0.625 ms. This value corresponds to 100 ms). */
-#define APP_ADV_DURATION                180000                                      /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
+#define APP_ADV_INTERVAL                (100*0.625)                                 /**< The advertising interval (in units of 0.625 ms. This value corresponds to 100 ms). */
+#define APP_ADV_DURATION                18000                                       /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
 
 /* Speed and cadence measurement interval (milliseconds). */
 #define SPEED_AND_CADENCE_MEAS_INTERVAL 2000

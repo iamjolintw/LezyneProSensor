@@ -142,9 +142,6 @@
 
 #define DEAD_BEEF                       0xDEADBEEF                                  /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
-#define APP_ADV_TIMEOUT                 0                                			/**< Time for which the device must be advertising in non-connectable mode (in seconds). 0 disables timeout. */
-#define APP_ADV_ADV_INTERVAL            MSEC_TO_UNITS(100, UNIT_0_625_MS)           /**< The advertising interval. This value can vary between 100ms to 10.24s). */
-
 BLE_CSCS_DEF(m_cscs);                                                               /**< Cycling speed and cadence service instance. */
 NRF_BLE_GATT_DEF(m_gatt);                                                           /**< GATT module instance. */
 NRF_BLE_QWRS_DEF(m_qwr, NRF_SDH_BLE_TOTAL_LINK_COUNT);                             	/**< Context for the Queued Write module.*/
@@ -920,7 +917,6 @@ static void advertising_init(void)
     ret_code_t             	err_code;
     ble_advertising_init_t 	init;
     ble_gap_addr_t			m_mac_addr;
-	int8_t 					tx_power_level = 0;
     uint8_t const 			lezyne_mac_address[6] = {0xB4, 0x37, 0xD1, 0x06, 0x00, 0x00};
 
     // set MAC address
@@ -942,19 +938,15 @@ static void advertising_init(void)
     // Build and set advertising data.
     memset(&init, 0, sizeof(init));
 
-    init.advdata.name_type               	= BLE_ADVDATA_FULL_NAME;
-    init.advdata.include_appearance      	= true;
-    init.advdata.flags                   	= BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
-    init.advdata.p_tx_power_level			= &tx_power_level;
+    init.advdata.name_type               = BLE_ADVDATA_FULL_NAME;
+    init.advdata.include_appearance      = true;
+    init.advdata.flags                   = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
+    init.advdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuids) / sizeof(m_adv_uuids[0]);
+    init.advdata.uuids_complete.p_uuids  = m_adv_uuids;
 
-    init.srdata.uuids_complete.uuid_cnt 	= sizeof(m_adv_uuids) / sizeof(m_adv_uuids[0]);
-    init.srdata.uuids_complete.p_uuids  	= m_adv_uuids;
+    advertising_config_get(&init.config);
 
-    init.config.ble_adv_fast_enabled  		= true;
-    init.config.ble_adv_fast_interval 		= APP_ADV_INTERVAL;
-    init.config.ble_adv_fast_timeout  		= APP_ADV_DURATION;
-
-    init.evt_handler 						= on_adv_evt;
+    init.evt_handler = on_adv_evt;
 
     err_code = ble_advertising_init(&m_advertising, &init);
     APP_ERROR_CHECK(err_code);
