@@ -45,8 +45,8 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(MMA8652_TWI_INSTANC
 #define ACCEL_DATARATE_MS						10//20			/* ACCEL_DATARATE_MS shall match to ACCEL_DATARATE */
 /* ASLP_RATE_160MS = 6.25 hz */
 #define ACCEL_SLEEPP_DATARATE					ASLP_RATE_160MS
-/* Threshold = 0x08; The step count is 0.063g/ count,  (0.5g/0.063g = 7.9) */
-#define ACCEL_FF_MT_THS_VALUE  					(THS3_MASK)
+/* Threshold = 0x18; The step count is 0.063g/ count,  (1.5g/0.063g = 23.8 ~= 24 =0x18) */
+#define ACCEL_FF_MT_THS_VALUE  					(THS4_MASK | THS3_MASK)
 /* Set the debounce counter to eliminate false readings */
 #define ACCEL_FF_MT_DEBOUNCE_COUNT 				2
 /* Set compensate time */
@@ -114,7 +114,8 @@ static void 		acc_step_mag_update(float mag_update_value);
 static ret_code_t 	accel_write_reg(uint8_t reg_addr, uint8_t reg_data);
 static ret_code_t 	accel_read_reg(uint8_t reg_addr, uint8_t *reg_data);
 static ret_code_t 	accel_burst_read_reg(uint8_t addr, uint8_t * pdata, size_t size);
-static void 		accel_i2c_gpio_enable (void);
+static ret_code_t 	accel_i2c_init (void);
+static void 		accel_gpio_init (void);
 static void 		accel_config_fifo_int(bool enable);
 static void 		accel_config_motion_int(bool enable);
 static void 		accel_wake_up(void);
@@ -528,9 +529,8 @@ static void accel_config_motion_int(bool enable)
 
 /**@brief Initialize I2C (TWI).
  */
-static ret_code_t accel_i2c_gpio_init (void)
+static ret_code_t accel_i2c_init (void)
 {
-	/* I2C initialize */
     const nrf_drv_twi_config_t twi_config = {
        .scl                = MMA8652_I2C_SCL_PIN,
        .sda                = MMA8652_I2C_SDA_PIN,
@@ -545,19 +545,14 @@ static ret_code_t accel_i2c_gpio_init (void)
 	return err_code;
 }
 
-/**@brief start gpio event I2C.
+/**@brief start gpio.
  */
-static void accel_i2c_gpio_enable (void)
+static void accel_gpio_init (void)
 {
-    /* GPIO Initialize */
-#if 0
-    nrf_drv_gpiote_in_config_t in_config1 = GPIOTE_CONFIG_IN_SENSE_HITOLO(false);
-	err_code = nrf_drv_gpiote_in_init(MMA8652_INT1_PIN, &in_config1, mma8652_int1_handler);
-#else
     nrf_drv_gpiote_in_config_t in_config1 = GPIOTE_CONFIG_IN_SENSE_LOTOHI(false);
     ret_code_t err_code = nrf_drv_gpiote_in_init(MMA8652_INT1_PIN, &in_config1, mma8652_int1_handler);
-#endif
 	APP_ERROR_CHECK(err_code);
+
 	nrf_drv_gpiote_in_config_t in_config2 = GPIOTE_CONFIG_IN_SENSE_TOGGLE(true);
     err_code = nrf_drv_gpiote_in_init(MMA8652_INT2_PIN, &in_config2, mma8652_int2_handler);
     APP_ERROR_CHECK(err_code);
@@ -1064,15 +1059,15 @@ void accel_init(void)
 {
 	NRF_LOG_INFO("accel_init.");
 #ifndef CSCS_MOCK_ENABLE
-	/* hardware initialize - I2C & GPIO */
-	accel_i2c_gpio_init();
+	/* hardware initialize - I2C */
+	accel_i2c_init();
 
 	/* configuration */
 	accel_configuration();
 
 #ifndef CSCS_MOCK_ENABLE
-	/* enable gpio */
-	accel_i2c_gpio_enable();
+	/* harware initialize - gpio */
+	accel_gpio_init();
 #endif
 
 #endif
