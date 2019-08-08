@@ -8,7 +8,7 @@
 #ifndef SYS_CONF_H
 #define SYS_CONF_H
 
-#define CSCS_MOCK_ENABLE // enable cscs simulator
+//#define CSCS_MOCK_ENABLE // enable cscs simulator
 
 /*--------------------------------------------------------------------------------*/
 /********************************* BLE - DEFINITION *******************************/
