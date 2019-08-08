@@ -302,10 +302,10 @@ endif
 #generate zip for DFU
 ifeq ($(PRETTY),1)
 	@echo generate application file for DFU 
-	$(TOOL_DIR)/nrfutil pkg generate --hw-version 0 --application-version 1 --application $(OUTPUT_DIRECTORY)/$(TARGETS).hex --sd-req 0xB7 --key-file $(TOOL_DIR)/private.key $(OUTPUT_DIRECTORY)/$(TARGETS).zip
+	$(TOOL_DIR)/nrfutil pkg generate --hw-version 0 --application-version 1 --application $(OUTPUT_DIRECTORY)/$(TARGETS).hex --sd-req 0xB7 --key-file $(TOOL_DIR)/$(DFU_TARGETS)/private.key $(OUTPUT_DIRECTORY)/$(TARGETS).zip
 	@echo merge BootLoader, SoftDevice and Application into one file
 	$(TOOL_DIR)/nrfutil settings generate --family NRF52 --application $(OUTPUT_DIRECTORY)/$(TARGETS).hex --application-version 1 --bootloader-version 0 --bl-settings-version 1 $(OUTPUT_DIRECTORY)/settings.hex
-	mergehex --merge $(DFU_HEX_DIR)/SPEED_DFU.hex $(OUTPUT_DIRECTORY)/settings.hex --output $(OUTPUT_DIRECTORY)/temp.hex
+	mergehex --merge $(DFU_HEX_DIR)/$(DFU_TARGETS).hex $(OUTPUT_DIRECTORY)/settings.hex --output $(OUTPUT_DIRECTORY)/temp.hex
 	mergehex --merge $(OUTPUT_DIRECTORY)/temp.hex $(OUTPUT_DIRECTORY)/$(TARGETS).hex $(SOFTDEVICE_HEX_DIR)/s132_nrf52_6.1.1_softdevice.hex --output $(OUTPUT_DIRECTORY)/whole.hex
 endif
 

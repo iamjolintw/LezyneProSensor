@@ -1,15 +1,15 @@
 PROJECT_NAME     := ble_app_cscs_pca10040_s132
-TARGETS          := LezyneSPD
-DFU_TARGETS      := SPEED_DFU
+TARGETS          := LezyneCAD
+DFU_TARGETS      := CADENCE_DFU
 OUTPUT_DIRECTORY := _build
 
 SDK_ROOT := ../../../../nRF5_SDK_15.3.0_59ac345
 TOOL_DIR := ../../../../../tools/dfu_key
 SOFTDEVICE_HEX_DIR := $(SDK_ROOT)/components/softdevice/s132/hex
-DFU_HEX_DIR := ../../../../speed_dfu/secure_bootloader/pca10040_ble/armgcc/_build
+DFU_HEX_DIR := ../../../../cadence_dfu/secure_bootloader/pca10040_ble/armgcc/_build
 PROJ_DIR := ../../..
 
-$(OUTPUT_DIRECTORY)/LezyneSPD.out: \
+$(OUTPUT_DIRECTORY)/LezyneCAD.out: \
   LINKER_SCRIPT  := ble_app_cscs_gcc_nrf52.ld
 
 # Source files common to all targets
@@ -303,10 +303,10 @@ LDFLAGS += -Wl,--gc-sections
 # use newlib in nano version
 LDFLAGS += --specs=nano.specs
 
-LezyneSPD: CFLAGS += -D__HEAP_SIZE=8192
-LezyneSPD: CFLAGS += -D__STACK_SIZE=8192
-LezyneSPD: ASMFLAGS += -D__HEAP_SIZE=8192
-LezyneSPD: ASMFLAGS += -D__STACK_SIZE=8192
+LezyneCAD: CFLAGS += -D__HEAP_SIZE=8192
+LezyneCAD: CFLAGS += -D__STACK_SIZE=8192
+LezyneCAD: ASMFLAGS += -D__HEAP_SIZE=8192
+LezyneCAD: ASMFLAGS += -D__STACK_SIZE=8192
 
 # Add standard libraries at the very end of the linker input, after all objects
 # that may need symbols provided by these libraries.
@@ -316,12 +316,12 @@ LIB_FILES += -lc -lnosys -lm
 .PHONY: default help
 
 # Default target - first one defined
-default: LezyneSPD
+default: LezyneCAD
 
 # Print all targets that can be built
 help:
 	@echo following targets are available:
-	@echo		LezyneSPD
+	@echo		LezyneCAD
 	@echo		flash_softdevice
 	@echo		sdk_config - starting external tool for editing sdk_config.h
 	@echo		flash      - flashing binary
@@ -337,8 +337,8 @@ $(foreach target, $(TARGETS), $(call define_target, $(target)))
 
 # Flash the program
 flash: default
-	@echo Flashing: $(OUTPUT_DIRECTORY)/LezyneSPD.hex
-	nrfjprog -f nrf52 --program $(OUTPUT_DIRECTORY)/LezyneSPD.hex --sectorerase
+	@echo Flashing: $(OUTPUT_DIRECTORY)/LezyneCAD.hex
+	nrfjprog -f nrf52 --program $(OUTPUT_DIRECTORY)/LezyneCAD.hex --sectorerase
 	nrfjprog -f nrf52 --reset
 
 # Flash softdevice

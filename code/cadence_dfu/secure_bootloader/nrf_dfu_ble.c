@@ -928,6 +928,24 @@ static uint32_t gap_params_init(void)
 
     BLE_GAP_CONN_SEC_MODE_SET_OPEN(&sec_mode);
 
+	// set MAC address
+	ble_gap_addr_t			m_mac_addr;
+	uint8_t const 			lezyne_mac_address[6] = {0xB4, 0x37, 0xD1, 0x08, 0x00, 0x00};
+	err_code = sd_ble_gap_addr_get(&m_mac_addr);
+	APP_ERROR_CHECK(err_code);
+
+	for (uint8_t x=0 ; x<4 ; x++)
+		m_mac_addr.addr[5-x] = lezyne_mac_address[x];
+
+	uint16_t uLower = (uint16_t)(NRF_FICR->DEVICEID[0]);
+	m_mac_addr.addr[1] 	= (uint8_t)(uLower & 0xFF);
+	m_mac_addr.addr[0]	= (uint8_t)(uLower >> 8);
+	m_mac_addr.addr_type = BLE_GAP_ADDR_TYPE_PUBLIC;
+
+	err_code = sd_ble_gap_addr_set(&m_mac_addr);
+	APP_ERROR_CHECK(err_code);
+
+
 #if (!NRF_DFU_BLE_REQUIRES_BONDS)
 
     err_code = gap_address_change();

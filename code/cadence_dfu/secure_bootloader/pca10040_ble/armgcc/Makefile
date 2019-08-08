@@ -1,11 +1,11 @@
 PROJECT_NAME     := secure_bootloader_ble_s132_pca10040
-TARGETS          := SPEED_DFU
+TARGETS          := CADENCE_DFU
 OUTPUT_DIRECTORY := _build
 
 SDK_ROOT := ../../../../nRF5_SDK_15.3.0_59ac345
 PROJ_DIR := ../..
 
-$(OUTPUT_DIRECTORY)/SPEED_DFU.out: \
+$(OUTPUT_DIRECTORY)/CADENCE_DFU.out: \
   LINKER_SCRIPT  := secure_bootloader_gcc_nrf52.ld
 
 # Source files common to all targets
@@ -212,8 +212,8 @@ LDFLAGS += -Wl,--gc-sections
 # use newlib in nano version
 LDFLAGS += --specs=nano.specs
 
-SPEED_DFU: CFLAGS += -D__HEAP_SIZE=0
-SPEED_DFU: ASMFLAGS += -D__HEAP_SIZE=0
+CADENCE_DFU: CFLAGS += -D__HEAP_SIZE=0
+CADENCE_DFU: ASMFLAGS += -D__HEAP_SIZE=0
 
 # Add standard libraries at the very end of the linker input, after all objects
 # that may need symbols provided by these libraries.
@@ -223,12 +223,12 @@ LIB_FILES += -lc -lnosys -lm
 .PHONY: default help
 
 # Default target - first one defined
-default: SPEED_DFU
+default: CADENCE_DFU
 
 # Print all targets that can be built
 help:
 	@echo following targets are available:
-	@echo		SPEED_DFU
+	@echo		CADENCE_DFU
 	@echo		flash_softdevice
 	@echo		sdk_config - starting external tool for editing sdk_config.h
 	@echo		flash      - flashing binary
@@ -244,8 +244,8 @@ $(foreach target, $(TARGETS), $(call define_target, $(target)))
 
 # Flash the program
 flash: default
-	@echo Flashing: $(OUTPUT_DIRECTORY)/SPEED_DFU.hex
-	nrfjprog -f nrf52 --program $(OUTPUT_DIRECTORY)/SPEED_DFU.hex --sectorerase
+	@echo Flashing: $(OUTPUT_DIRECTORY)/CADENCE_DFU.hex
+	nrfjprog -f nrf52 --program $(OUTPUT_DIRECTORY)/CADENCE_DFU.hex --sectorerase
 	nrfjprog -f nrf52 --reset
 
 # Flash softdevice
