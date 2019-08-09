@@ -53,16 +53,16 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(MMA8652_TWI_INSTANC
 #define ACCEL_PROCESS_COMPENSATE_TIME			2		// unit:ms
 /* FIFO Event Sample Count Watermark, the value shall be less than 64 */
 #define DEF_WATERMARK_VAL 						25
-/* Minimum moving angle (degree per 0.25s (25*10ms)), degree 23 equal 2.1 Km/h (23x(1000/ACCEL_DATARATE_MS/DEF_WATERMARK_VAL)x2100*3600/360/1000) */
-#define ACCEL_MOVE_ANGLE_MIN					23
+/* Minimum moving angle (degree per 0.25s (25*10ms)), degree 28 equal 19 RPM (28x(ACCEL_DATARATE_MS/DEF_WATERMARK_VAL)/360*60) */
+#define ACCEL_MOVE_ANGLE_MIN					28
 /* Moving counter: 6 movements in 25*10ms = 1.5s time window */
 #define ACCEL_MOVE_COUNT_MIN					6
 /* Non-moving counter: (10 - 6)*25*10ms = 1.0s time window */
 #define ACCEL_MOVE_COUNT_MAX 					10
 /* Switching the threshold by different RPM  */
-#define ACCEL_RPM_SPEED_HIGH					150 // rpm  (2.5 lap per second *60)
-#define ACCEL_RPM_SPEED_MED						90  // rpm  (1.5 lap per second *60)
-#define ACCEL_RPM_SPEED_LOW_MH					16  // rpm  (0.27 lap per second *60)
+#define ACCEL_RPM_SPEED_HIGH					90 // RPM  (1.5 lap per second *60)
+#define ACCEL_RPM_SPEED_MED						60 // RPM  (1 lap per second *60)
+#define ACCEL_RPM_SPEED_LOW_MH					20 // RPM  (0.33 lap per second *60)
 
 
 #ifdef ACCELEROMETER_SELF_ACTIVATE
@@ -79,8 +79,7 @@ static t_accel_task_pending task_pending_singal = {0};
 /* Protector for critical global variable */
 static volatile bool rw_lock_protect_flag = false;
 /* acc angle variable */
-static int16_t last_angle_residue = DEF_INVALID_LAST_ANGLE;
-
+static int16_t 	last_angle_residue = DEF_INVALID_LAST_ANGLE;
 /* Time stamp: range: 0 ~ 256 seconds. Needs to take care of wrap-around */
 static uint16_t ui16_total_time = 0;
 /* Stationary counter: to indicate sensor is moving or not */
@@ -89,12 +88,14 @@ static uint8_t 	ui8_movecnt = 0;
 static uint32_t ui32_last_lap = 0;
 /* Flag for switching the high speed low speed */
 static bool 	acc_speed_high_flag = false;
+/* Flag for force report cadence */
+static bool 	acc_meas_report_flag = false;
 /* lap indicator: range: 0 ~ 8 million km */
 static uint32_t ui32_total_step = 0;
 /* State variable for zero crossing judgment */
 static step_detect_t  step_state = eSTEP_RESET;
 /* Sample number for zero crossing judgment: range: 0 ~ 11930 hours */
-static uint32_t ui32_step_sameple_counter = 0;
+static uint32_t ui32_step_sample_counter = 0;
 /* Sample number for detect a lap: range: 0 ~ 11930 hours */
 static uint32_t ui32_step_detect_number = 0;
 /* Last average value of zero crossing judgment */
@@ -655,14 +656,14 @@ void acc_read_fifodata_datadump(void)
 		int16_t in16_ay = (int16_t)(last_ay1*1000);
 		int16_t in16_az = (int16_t)(last_az1*1000);
 
-		//NRF_LOG_INFO( "ID: %5d: X: %d, Z: %d, mag: %d", ui32_step_sameple_counter, in16_ax, in16_az, mag_xyz);
+		//NRF_LOG_INFO( "ID: %5d: X: %d, Z: %d, mag: %d", ui32_step_sample_counter, in16_ax, in16_az, mag_xyz);
 		cscs_measurement.is_wheel_rev_data_present = true;
 		cscs_measurement.is_crank_rev_data_present = true;
-		cscs_measurement.cumulative_wheel_revs = ui32_step_sameple_counter;
+		cscs_measurement.cumulative_wheel_revs = ui32_step_sample_counter;
 		cscs_measurement.last_wheel_event_time = (uint32_t)in16_ax;
 		cscs_measurement.cumulative_crank_revs = (uint16_t)in16_ay;
 		cscs_measurement.last_crank_event_time	 =(uint16_t)in16_az;
-		ui32_step_sameple_counter ++;
+		ui32_step_sample_counter ++;
 
 		uint8_t retry_count = 0;
 		while ((accel_csc_meas_timeout_handler2(cscs_measurement) != NRF_SUCCESS))
@@ -722,7 +723,7 @@ static void acc_step_update_angle(uint16_t *angle_array, float *mag_array)
 	uint8_t i = 0;
 	uint16_t last_angle = angle_array[DEF_WATERMARK_VAL-1];
 	int16_t current_angle = 0, temp_angle_diff = 0;
-
+	
 	rw_lock_set(true);	// protect the global variable
 	/* ticks time */
 	static uint32_t last_ticks = 0;
@@ -770,7 +771,7 @@ static void acc_step_update_angle(uint16_t *angle_array, float *mag_array)
 	rw_lock_set(false);	//release protection
 
 	/* movement detection */
-	if(current_angle < ACCEL_MOVE_ANGLE_MIN) 	// speed < 2.0kmh
+	if(current_angle < ACCEL_MOVE_ANGLE_MIN) 	// speed < 20 RPM
 	{
 		if( ui8_movecnt == 0)	// no moving
 		{
@@ -779,6 +780,7 @@ static void acc_step_update_angle(uint16_t *angle_array, float *mag_array)
 		else if( ui8_movecnt < ACCEL_MOVE_COUNT_MIN) 	// moving -> stop, counter less minimum stop requirement.
 		{
 			ui8_movecnt = 0;
+			acc_meas_report_flag = true;
 			return;
 		}
 		else	// gradually stop or speed over 20Kmh, angle close to 0
@@ -793,7 +795,7 @@ static void acc_step_update_angle(uint16_t *angle_array, float *mag_array)
 			}
 		}
 	}
-	else										// speed >= 2.0kmh
+	else										// speed >= 20 RPM
 	{
 		if(ui8_movecnt == ACCEL_MOVE_COUNT_MAX)
 		{
@@ -802,7 +804,6 @@ static void acc_step_update_angle(uint16_t *angle_array, float *mag_array)
 		else if(ui8_movecnt < ACCEL_MOVE_COUNT_MIN )
 		{
 			ui8_movecnt++;
-			return; // do not need to update total angle and lap
 		}
 		else 									//(ui32_movecnt >= ACCEL_MOVE_COUNT_MINX)
 		{
@@ -819,7 +820,7 @@ void acc_step_reset_angle(void)
     last_angle_residue = DEF_INVALID_LAST_ANGLE;
     ui16_total_time = 0;
     step_state = eSTEP_RESET;
-    ui32_step_sameple_counter = 0;
+    ui32_step_sample_counter = 0;
 }
 
 /**@brief Function process accelerometer data to check zero-crossing condition.
@@ -827,16 +828,16 @@ void acc_step_reset_angle(void)
 static void acc_step_mag_update(float mag_update_value)
 {
 	/* ============= Step 0: Initialize ============= */
-	#define MAX_FILTER_WINDOW      			0.15f
+	#define MAX_FILTER_WINDOW      			0.16f
 	#define AVERAGE_ALPHA_FACTOR			0.05f
 
 	static float peakmax = 0, valleymax = 0;
 	float step_temp_min = 0, step_temp_max = 0;
 
-	if(ui32_step_sameple_counter == 0) // initiate default value
+	if(ui32_step_sample_counter == 0) // initiate default value
 	{
 		last_average_weighting =  mag_update_value;
-		ui32_step_sameple_counter ++;
+		ui32_step_sample_counter ++;
 		return;
 	}
 	//#low pass filter
@@ -906,8 +907,11 @@ static void acc_step_mag_update(float mag_update_value)
 		{
 			if((mag_update_value >step_temp_max))
 			{
-				ui32_total_step++;
-				ui32_step_detect_number = ui32_step_sameple_counter;
+				if(ui8_movecnt > ACCEL_MOVE_COUNT_MIN) // not moving
+				{
+					ui32_total_step++;
+					ui32_step_detect_number = ui32_step_sample_counter;
+				}
 				valleymax = step_temp_min;
 				peakmax = step_temp_max;
 				step_state = eSTEP_START_PEAK;
@@ -925,7 +929,7 @@ static void acc_step_mag_update(float mag_update_value)
 #ifdef SENSOR_DEBUG_OUTPUT
 	NRF_LOG_INFO("step_state: %d, peakmax: %d, valleymax: %d", step_state,(int16_t)(peakmax*1000),(int16_t)(valleymax*1000));
 #endif
-	ui32_step_sameple_counter ++;
+	ui32_step_sample_counter ++;
 }
 
 /**@brief Function for Simple accelerometer offset calibration.
@@ -967,7 +971,7 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 	#define ACCEL_EVENT_TIME_FACTOR 						1.024f
 
     static uint16_t ui16_last_total_time = 0, ui16_last_event_time = 0;	// total time is 1000-based, event time is 1024-based time
-    static uint32_t ui32_last_step_sameple = 0, ui32_last_step_detect = 0;
+    static uint32_t ui32_last_step_sample = 0, ui32_last_step_detect = 0;
 
     uint16_t event_time_inc = 0, total_time_diff = 0, ui16_wheel_event_time = 0;			// event time is 1024-based time
    	uint16_t current_lap = 0, average_rpm = 0;
@@ -978,10 +982,13 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
     	NRF_LOG_INFO("Warning!!! Read and Write collision, skip report");
     	return NRF_ERROR_INVALID_STATE;
     }
-    else if((ui8_movecnt > 0) && !acc_speed_high_flag) // if still moving
+    else if((ui32_last_lap == ui32_total_step) && !acc_meas_report_flag)
     {
-    	/* if the lap remains unchanged and speed low than 2.1km, do not send CSC report */
-    	if((ui32_last_lap == ui32_total_step))
+    	if(acc_speed_high_flag)
+    	{
+   			acc_speed_high_flag = false;
+    	}
+    	/* if the lap remains unchanged, do not send CSC report */
     	{
 #ifdef SENSOR_DEBUG_OUTPUT
     		NRF_LOG_INFO("accel_csc_measurement(): lap without change, skip report");
@@ -1003,8 +1010,20 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 
 	/* step based time event calculation*/
 	current_sample = (uint16_t)(ui32_step_detect_number - ui32_last_step_detect);
-	event_time_inc = (uint16_t)((float)(current_sample *((float)total_time_diff/(float)(ui32_step_sameple_counter - ui32_last_step_sameple)))*ACCEL_EVENT_TIME_FACTOR);
+	event_time_inc = (uint16_t)((float)(current_sample *((float)total_time_diff/(float)(ui32_step_sample_counter - ui32_last_step_sample)))*ACCEL_EVENT_TIME_FACTOR);
+
 	ui16_wheel_event_time = (event_time_inc != 0)? ui16_last_event_time + event_time_inc : (ui16_total_time * ACCEL_EVENT_TIME_FACTOR);
+	if(event_time_inc != 0)
+	{
+		ui16_wheel_event_time = ui16_last_event_time + event_time_inc;
+		ui32_last_step_detect = ui32_step_detect_number;
+	}
+	else
+	{
+		ui16_wheel_event_time = ui16_last_event_time + (total_time_diff * ACCEL_EVENT_TIME_FACTOR);
+		ui32_last_step_detect = ui32_step_sample_counter; // reset ui32_last_step_detect and ui32_step_detect_number to the latest sample
+		ui32_step_detect_number = ui32_last_step_detect;
+	}
 
 	/* speed calculation */
 	current_lap = ui32_total_step - ui32_last_lap;
@@ -1046,13 +1065,13 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 #endif
 	/* last lap depend on angle mode or step mode */
 	ui32_last_lap = ui32_total_step;
-	ui32_last_step_sameple = ui32_step_sameple_counter;
-	ui32_last_step_detect = ui32_step_detect_number;
+	ui32_last_step_sample = ui32_step_sample_counter;
 	ui16_last_event_time = ui16_wheel_event_time;
 	ui16_last_total_time = ui16_total_time;
+	acc_meas_report_flag = false;
 #ifdef SENSOR_DEBUG_OUTPUT
 	NRF_LOG_INFO("current_sample: %d, event_time: %d, total_time_diff: %d, rpm: %d", current_sample, ui16_wheel_event_time , total_time_diff, average_rpm);
-	NRF_LOG_INFO("sameple_counter: %d, step_detect_num: %d, event_time_inc: %d", ui32_step_sameple_counter, ui32_step_detect_number, event_time_inc );
+	NRF_LOG_INFO("sample_counter: %d, step_detect_num: %d, event_time_inc: %d", ui32_step_sample_counter, ui32_step_detect_number, event_time_inc );
 #endif
     return NRF_SUCCESS;
 }
