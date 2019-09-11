@@ -148,6 +148,7 @@ NRF_BLE_QWRS_DEF(m_qwr, NRF_SDH_BLE_TOTAL_LINK_COUNT);                          
 BLE_ADVERTISING_DEF(m_advertising);                                                 /**< Advertising module instance. */
 
 static uint16_t          m_conn_handle = BLE_CONN_HANDLE_INVALID;                   /**< Handle of the current connection. */
+static bool 			start_flag = false;
 static bool				complete_flag = true;										/**< Indicator for transmit complete. */
 static ble_sensor_location_t supported_locations[] =                                /**< Supported location for the sensor location. */
 {
@@ -442,11 +443,9 @@ static void gap_params_init(void)
 
 #ifdef DEVICE_NAME_WITH_SERIAL_NO
     /* The maximum length of BLE device name is 170 characters, however, the advertisement packet can only contain user payload of up to 29 bytes only. */
-	char strDeviceName[170] = {0};
-	unsigned int uLower 	= NRF_FICR->DEVICEADDR[0];
-	unsigned int uUppwer 	= NRF_FICR->DEVICEADDR[1];
-	NRF_LOG_INFO("%s-%08X-%08X.",&DEVICE_NAME[0],uUppwer,uLower);
-	sprintf(&strDeviceName[0],"%s-%08X%08X",&DEVICE_NAME[0],uUppwer,uLower);
+	uint16_t uLower = (uint16_t)(NRF_FICR->DEVICEID[0]);
+    char strDeviceName[20] = {0};
+	sprintf(&strDeviceName[0],"%s-%02X%02X",&DEVICE_NAME[0],(uint8_t)(uLower & 0xFF),(uint8_t)(uLower >> 8));
 	err_code = sd_ble_gap_device_name_set(&sec_mode,
                                       (const uint8_t *) strDeviceName,
                                       strlen(strDeviceName));
@@ -800,10 +799,17 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             break;
 
         case BLE_GATTS_EVT_HVN_TX_COMPLETE:
+        	//NRF_LOG_INFO("GATT Server Tx complete.");
         	complete_flag = true;
         	break;
 
+        case BLE_GATTS_EVT_WRITE:
+        	//NRF_LOG_INFO("GATT Server Write.");
+        	start_flag = true;
+        	break;
+
         default:
+        	//NRF_LOG_INFO("GATT other: 0x%02X.",p_ble_evt->header.evt_id);
             // No implementation needed.
             break;
     }
@@ -938,8 +944,16 @@ static void advertising_init(void)
     // Build and set advertising data.
     memset(&init, 0, sizeof(init));
 
+    // Set manufacturing data
+    ble_advdata_manuf_data_t			manuf_data;
+    uint8_t data[]						= MANUFACTURER_VERSION;
+    manuf_data.company_identifier		= 0x00;
+    manuf_data.data.p_data				= data;
+    manuf_data.data.size				= 2;//sizeof(data);
+    init.advdata.p_manuf_specific_data	= &manuf_data;
+
     init.advdata.name_type               = BLE_ADVDATA_FULL_NAME;
-    init.advdata.include_appearance      = true;
+    init.advdata.include_appearance      = false;
     init.advdata.flags                   = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
     init.advdata.uuids_complete.uuid_cnt = sizeof(m_adv_uuids) / sizeof(m_adv_uuids[0]);
     init.advdata.uuids_complete.p_uuids  = m_adv_uuids;
@@ -1003,6 +1017,12 @@ void ble_init(void)
     timers_init();
     power_management_init();
     ble_stack_init();
+
+#ifdef ACC_ST16G_ENABLE
+    // Enable DCDC converter
+    sd_power_dcdc_mode_set(NRF_POWER_DCDC_ENABLE);
+#endif
+
     gap_params_init();
     gatt_init();
     advertising_init();
@@ -1141,11 +1161,15 @@ void accel_csc_meas_timeout_handler(void * p_context)
 uint32_t accel_csc_meas_timeout_handler2(ble_cscs_meas_t p_context)
 {
     uint32_t        err_code = NRF_SUCCESS;
-
-    if (ble_connection_status())
+    uint16_t 		error_counter = 0;
+    if (ble_connection_status() && start_flag)
     {
     	ble_conn_state_conn_handle_list_t conn_handles = ble_conn_state_periph_handles();
- 		while(!complete_flag);
+ 		while(!complete_flag && error_counter < 5)
+ 		{
+ 			nrf_delay_ms(1);
+ 			error_counter ++;
+ 		}
  		complete_flag = false;
     	for (uint8_t i = 0; i < conn_handles.len; i++)
     	{

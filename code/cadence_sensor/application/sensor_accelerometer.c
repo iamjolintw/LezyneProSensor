@@ -391,14 +391,26 @@ static void accel_configuration(void)
 	uint8_t reset_status = 0;
 
 	/* read WHO_AND_I first */
+#if 1
 	accel_read_reg(MMA8652_WHO_AM_I, &who_n_i);
 	if(who_n_i != MMA8652_WHO_AM_I_OUT)
+#else
+	accel_read_reg(0x0F, &who_n_i);
+	if(who_n_i != 0x33)
+#endif
 	{
-		NRF_LOG_ERROR(" Device ID not match!! :MMA8652 0x4A: 0x%x", who_n_i);
+		NRF_LOG_ERROR(" Device ID not match!! : 0x33: 0x%x", who_n_i);
 		return;
 	}
+#if 0
+	else
+	{
+		NRF_LOG_ERROR(" Device ID match!! : 0x33: 0x%x", who_n_i);
+		return;
+	}
+#endif
 
-    /* RESET sensor, all registers are reset to default */
+	/* RESET sensor, all registers are reset to default */
     accel_write_reg(MMA8652_CTRL_REG2, RST_MASK);
     do {
     	nrf_delay_ms(5);
@@ -545,6 +557,18 @@ static ret_code_t accel_i2c_init (void)
     APP_ERROR_CHECK(err_code);
     nrf_drv_twi_enable(&acce_m_twi);
 	return err_code;
+}
+
+/**@brief Initialize pin switch for choosing I2C/SPI.
+ */
+static ret_code_t accel_i2c_opt (void)
+{
+	ret_code_t err_code;
+
+	nrf_drv_gpiote_out_config_t out_config = GPIOTE_CONFIG_OUT_SIMPLE(false);
+
+	err_code = nrf_drv_gpiote_out_init(MMA8652_I2C_OPTION, &out_config);
+	APP_ERROR_CHECK(err_code);
 }
 
 /**@brief start gpio.
@@ -1082,6 +1106,9 @@ void accel_init(void)
 {
 	NRF_LOG_INFO("accel_init.");
 #ifndef CSCS_MOCK_ENABLE
+	/* hardware initialize - decide I2C address */
+	//accel_i2c_opt();
+
 	/* hardware initialize - I2C */
 	accel_i2c_init();
 
