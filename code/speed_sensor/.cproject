@@ -29,7 +29,7 @@
             			
             <storageModule moduleId="cdtBuildSystem" version="4.0.0">
                 				
-                <configuration artifactName="${ProjName}" buildProperties="" description="" id="0.372615406" name="Default" optionalBuildProperties="org.eclipse.cdt.docker.launcher.containerbuild.property.selectedvolumes=,org.eclipse.cdt.docker.launcher.containerbuild.property.volumes=" parent="org.eclipse.cdt.build.core.prefbase.cfg">
+                <configuration artifactName="${ProjName}" buildProperties="" description="" id="0.372615406" name="Default" optionalBuildProperties="org.eclipse.cdt.docker.launcher.containerbuild.property.volumes=,org.eclipse.cdt.docker.launcher.containerbuild.property.selectedvolumes=" parent="org.eclipse.cdt.build.core.prefbase.cfg">
                     					
                     <folderInfo id="0.372615406." name="/" resourcePath="">
                         						
@@ -109,8 +109,62 @@
         	
     </storageModule>
     	
-    <storageModule moduleId="org.eclipse.cdt.make.core.buildtargets"/>
-    	
     <storageModule moduleId="org.eclipse.cdt.internal.ui.text.commentOwnerProjectMappings"/>
+    	
+    <storageModule moduleId="org.eclipse.cdt.make.core.buildtargets">
+        		
+        <buildTargets>
+            			
+            <target name="LIS2DH12" path="" targetID="org.eclipse.cdt.build.MakeTargetBuilder">
+                				
+                <buildCommand>make</buildCommand>
+                				
+                <buildArguments>PRETTY=1</buildArguments>
+                				
+                <buildTarget>LIS2DH12</buildTarget>
+                				
+                <stopOnError>true</stopOnError>
+                				
+                <useDefaultCommand>true</useDefaultCommand>
+                				
+                <runAllBuilders>true</runAllBuilders>
+                			
+            </target>
+            			
+            <target name="LezyneSPD" path="" targetID="org.eclipse.cdt.build.MakeTargetBuilder">
+                				
+                <buildCommand>make</buildCommand>
+                				
+                <buildArguments>PRETTY=1</buildArguments>
+                				
+                <buildTarget>LezyneSPD</buildTarget>
+                				
+                <stopOnError>true</stopOnError>
+                				
+                <useDefaultCommand>true</useDefaultCommand>
+                				
+                <runAllBuilders>true</runAllBuilders>
+                			
+            </target>
+            			
+            <target name="help" path="" targetID="org.eclipse.cdt.build.MakeTargetBuilder">
+                				
+                <buildCommand>make</buildCommand>
+                				
+                <buildArguments>PRETTY=1</buildArguments>
+                				
+                <buildTarget>help</buildTarget>
+                				
+                <stopOnError>true</stopOnError>
+                				
+                <useDefaultCommand>true</useDefaultCommand>
+                				
+                <runAllBuilders>true</runAllBuilders>
+                			
+            </target>
+            		
+        </buildTargets>
+        	
+    </storageModule>
     
 </cproject>

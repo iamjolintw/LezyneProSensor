@@ -88,6 +88,9 @@
 #include "nrf_gpio.h"
 #include "nrf_drv_gpiote.h"
 #include "nrf_delay.h"
+#ifdef ACCELEROMETER_DUMP_FIFO
+#include "ble_nus.h"
+#endif
 
 // buttonless DFU service
 #include "nrf_dfu_ble_svci_bond_sharing.h"
@@ -142,12 +145,15 @@
 
 #define DEAD_BEEF                       0xDEADBEEF                                  /**< Value used as error code on stack dump, can be used to identify stack location on stack unwind. */
 
+#ifdef ACCELEROMETER_DUMP_FIFO
+BLE_NUS_DEF(m_nus, NRF_SDH_BLE_TOTAL_LINK_COUNT);                                   /**< BLE NUS service instance. */
+#endif
 BLE_CSCS_DEF(m_cscs);                                                               /**< Cycling speed and cadence service instance. */
 NRF_BLE_GATT_DEF(m_gatt);                                                           /**< GATT module instance. */
 NRF_BLE_QWRS_DEF(m_qwr, NRF_SDH_BLE_TOTAL_LINK_COUNT);                             	/**< Context for the Queued Write module.*/
 BLE_ADVERTISING_DEF(m_advertising);                                                 /**< Advertising module instance. */
 
-static uint16_t          m_conn_handle = BLE_CONN_HANDLE_INVALID;                   /**< Handle of the current connection. */
+static uint16_t         m_conn_handle = BLE_CONN_HANDLE_INVALID;                    /**< Handle of the current connection. */
 static bool 			start_flag = false;
 static bool				complete_flag = true;										/**< Indicator for transmit complete. */
 static ble_sensor_location_t supported_locations[] =                                /**< Supported location for the sensor location. */
@@ -272,6 +278,8 @@ NRF_SDH_STATE_OBSERVER(m_buttonless_dfu_state_obs, 0) =
     .handler = buttonless_dfu_sdh_state_observer,
 };
 
+/**@brief Get advertising configuration.
+ */
 static void advertising_config_get(ble_adv_modes_config_t * p_config)
 {
     memset(p_config, 0, sizeof(ble_adv_modes_config_t));
@@ -281,6 +289,8 @@ static void advertising_config_get(ble_adv_modes_config_t * p_config)
     p_config->ble_adv_fast_timeout  = APP_ADV_DURATION;
 }
 
+/**@brief Handler for disconnection.
+ */
 static void disconnect(uint16_t conn_handle, void * p_context)
 {
     UNUSED_PARAMETER(p_context);
@@ -427,7 +437,6 @@ static void timers_init(void)
     APP_ERROR_CHECK(err_code);
 }
 
-
 /**@brief Function for the GAP initialization.
  *
  * @details This function sets up all the necessary GAP (Generic Access Profile) parameters of the
@@ -471,7 +480,6 @@ static void gap_params_init(void)
     APP_ERROR_CHECK(err_code);
 }
 
-
 /**@brief Function for initializing the GATT module.
  */
 static void gatt_init(void)
@@ -493,6 +501,27 @@ static void nrf_qwr_error_handler(uint32_t nrf_error)
     APP_ERROR_HANDLER(nrf_error);
 }
 
+#ifdef ACCELEROMETER_DUMP_FIFO
+/**@brief Function for handling the data from the Nordic UART Service.
+ *
+ * @details This function will process the data received from the Nordic UART BLE Service and send
+ *          it to the UART module.
+ *
+ * @param[in] p_evt       Nordic UART Service event.
+ */
+/**@snippet [Handling the data received over BLE] */
+static void nus_data_handler(ble_nus_evt_t * p_evt)
+{
+	//NRF_LOG_INFO("nus_data_handler = %d ",p_evt->type);
+    if (p_evt->type == BLE_NUS_EVT_RX_DATA)
+    {
+    	NRF_LOG_INFO("Received data from BLE NUS. ");
+    }
+
+}
+/**@snippet [Handling the data received over BLE] */
+#endif
+
 /**@brief Function for initializing services that will be used by the application.
  *
  * @details Initialize the Cycling Speed and Cadence, Battery and Device Information services.
@@ -500,6 +529,9 @@ static void nrf_qwr_error_handler(uint32_t nrf_error)
 static void services_init(void)
 {
     uint32_t              		err_code;
+#ifdef ACCELEROMETER_DUMP_FIFO
+    ble_nus_init_t     			nus_init;
+#endif
     ble_cscs_init_t       		cscs_init;
     ble_dis_init_t        		dis_init;
     ble_sensor_location_t 		sensor_location;
@@ -558,6 +590,14 @@ static void services_init(void)
     err_code = ble_dis_init(&dis_init);
     APP_ERROR_CHECK(err_code);
 
+    // Initialize NUS.
+#ifdef ACCELEROMETER_DUMP_FIFO
+    memset(&nus_init, 0, sizeof(nus_init));
+    nus_init.data_handler = nus_data_handler;
+    err_code = ble_nus_init(&m_nus, &nus_init);
+    APP_ERROR_CHECK(err_code);
+#endif
+
     // init connection state
     ble_conn_state_init();
 }
@@ -594,7 +634,6 @@ static void conn_params_error_handler(uint32_t nrf_error)
 {
     APP_ERROR_HANDLER(nrf_error);
 }
-
 
 /**@brief Function for initializing the Connection Parameters module.
  */
@@ -640,7 +679,6 @@ static void sleep_mode_enter(void)
     APP_ERROR_CHECK(err_code);
 }
 
-
 /**@brief Function for handling advertising events.
  *
  * @details This function will be called for advertising events which are passed to the application.
@@ -684,7 +722,6 @@ static void on_adv_evt(ble_adv_evt_t ble_adv_evt)
     }
 }
 
-
 /**@brief Function for handling the Connected event.
  *
  * @param[in] p_gap_evt GAP event received from the BLE stack.
@@ -713,7 +750,6 @@ static void on_connected(const ble_gap_evt_t * const p_gap_evt)
         advertising_start();
     }
 }
-
 
 /**@brief Function for handling the Disconnected event.
  *
@@ -815,7 +851,6 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
     }
 }
 
-
 /**@brief Function for initializing the BLE stack.
  *
  * @details Initializes the SoftDevice and the BLE event interrupt.
@@ -840,7 +875,6 @@ static void ble_stack_init(void)
     // Register a handler for BLE events.
     NRF_SDH_BLE_OBSERVER(m_ble_observer, APP_BLE_OBSERVER_PRIO, ble_evt_handler, NULL);
 }
-
 
 /**@brief Function for handling events from the BSP module.
  *
@@ -881,7 +915,6 @@ void bsp_event_handler(bsp_event_t event)
     }
 }
 
-
 /**@brief Function for the Peer Manager initialization.
  */
 static void peer_manager_init(void)
@@ -914,7 +947,6 @@ static void peer_manager_init(void)
     err_code = pm_register(pm_evt_handler);
     APP_ERROR_CHECK(err_code);
 }
-
 
 /**@brief Function for initializing the Advertising functionality.
  */
@@ -968,7 +1000,6 @@ static void advertising_init(void)
     ble_advertising_conn_cfg_tag_set(&m_advertising, APP_BLE_CONN_CFG_TAG);
 }
 
-
 /**@brief Function for initializing power management.
  */
 static void power_management_init(void)
@@ -977,7 +1008,6 @@ static void power_management_init(void)
     err_code = nrf_pwr_mgmt_init();
     APP_ERROR_CHECK(err_code);
 }
-
 
 /**@brief Function for starting advertising.
  */
@@ -1046,7 +1076,6 @@ void ble_advertising_entry(void)
 	NRF_LOG_INFO("ble advertising.");
 	advertising_start();
 }
-
 
 #ifdef CSCS_MOCK_ENABLE
 /**@brief Function for populating simulated cycling speed and cadence measurements.
@@ -1119,7 +1148,6 @@ void sensor_simulator_init(void)
 }
 #endif // CSCS_MOCK_ENABLE
 
-
 /**@brief Function accel_csc_meas_timeout_handler.
  */
 void accel_csc_meas_timeout_handler(void * p_context)
@@ -1165,7 +1193,7 @@ uint32_t accel_csc_meas_timeout_handler2(ble_cscs_meas_t p_context)
     if (ble_connection_status() && start_flag)
     {
     	ble_conn_state_conn_handle_list_t conn_handles = ble_conn_state_periph_handles();
- 		while(!complete_flag && error_counter < 5)
+ 		while(!complete_flag && error_counter < 10)
  		{
  			nrf_delay_ms(1);
  			error_counter ++;
@@ -1189,7 +1217,53 @@ uint32_t accel_csc_meas_timeout_handler2(ble_cscs_meas_t p_context)
     }
     return err_code;
 }
+
+#ifdef ACCELEROMETER_DUMP_FIFO
+/**@brief Function for customize data push.
+ */
+void accel_nus_data_push(int16_t *i16BufData)
+{
+    uint8_t  data_array[BLE_NUS_MAX_DATA_LEN];//must less than BLE_NUS_MAX_DATA_LEN
+    uint16_t 		length = 0, retry_count = 0;
+    static uint8_t	index = 0;
+    uint8_t         buff_num =0;
+	#define         BI16BIFDAT_NUMBER_COLUMN 	9
+    if (ble_connection_status() && start_flag)
+	{
+    	//NRF_LOG_INFO( "accel_uns_data_push");
+    	ble_conn_state_conn_handle_list_t conn_handles = ble_conn_state_periph_handles();
+    	for(int i = 0; i < 3 ; i++)
+    	{
+    		length = 0;
+        	data_array[length++] = index++;
+    		if(i<2)
+    		{
+    			buff_num = BI16BIFDAT_NUMBER_COLUMN;
+    		}
+    		else
+    		{
+    			buff_num = 7;
+    		}
+    		for(int j = 0; j < buff_num ; j++)
+    		{
+    			data_array[length++] = (uint8_t)(i16BufData[j+(i*BI16BIFDAT_NUMBER_COLUMN)]);
+    			data_array[length++] = (uint8_t)(i16BufData[j+(i*BI16BIFDAT_NUMBER_COLUMN)]>>8);
+    		}
+    		while ((ble_nus_data_send(&m_nus, (uint8_t *)data_array, &length, conn_handles.conn_handles[0]) != NRF_SUCCESS))
+			{
+				nrf_delay_ms(2);
+				retry_count++;
+				if(retry_count>=4)
+				{
+					//NRF_LOG_INFO( "accel_uns_data_push send failed :%d.", i);
+					break;
+				}
+			}
+    	}
+		//NRF_LOG_INFO( "accel_uns_data_push End.");
+    }
+}
+#endif
 /**
  * @}
  */
-

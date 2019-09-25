@@ -11,8 +11,10 @@
 #ifndef CONFIG_NFCT_PINS_AS_GPIOS
 	#define CONFIG_NFCT_PINS_AS_GPIOS
 #endif
-//#define CSCS_MOCK_ENABLE 	// enable cscs simulator
-//#define ACC_ST16G_ENABLE	// if defined, this is new hardware with ST 16G accelerometer, or, this is old hardware with NXP 8G accelerometer
+
+//#define ACCELEROMETER_DUMP_FIFO   	// test purpose: dump the G-force of x,y,z through OTA
+//#define CSCS_MOCK_ENABLE 				// enable cscs simulator
+#define ACC_ST16G_ENABLE				// if defined, this is new hardware with ST 16G accelerometer, or, this is old hardware with NXP 8G accelerometer
 
 /*--------------------------------------------------------------------------------*/
 /********************************* BLE - DEFINITION *******************************/
@@ -20,7 +22,7 @@
 #define DEVICE_NAME_WITH_SERIAL_NO													/**< switch for enable/disable combination serial number with device name. */
 #define DEVICE_NAME                     "LezyneSPD"	                            	/**< Name of device. Will be included in the advertising data. */
 #define MANUFACTURER_NAME               "LEZYNE"                       				/**< Manufacturer. Will be passed to Device Information Service. */
-#define MANUFACTURER_VERSION			"01"
+#define MANUFACTURER_VERSION			"02"
 
 /* According to iOS "Accessory-Design-Guideines.pdf" Version:
  * 23.6 Connection Parameters - also refer to Bluetooth 4.0 specification.
@@ -40,7 +42,7 @@
 #define MAX_CONN_INTERVAL               MSEC_TO_UNITS(MIN_CONNECTION_INTERVAL+15,	UNIT_1_25_MS)        /**< Maximum acceptable connection interval. */
 
 #define APP_ADV_INTERVAL                (100*0.625)                                 /**< The advertising interval (in units of 0.625 ms. This value corresponds to 100 ms). */
-#define APP_ADV_DURATION                18000                                     	/**< The advertising duration (180 seconds) in units of 10 milliseconds. */
+#define APP_ADV_DURATION                18000                                       /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
 
 /* Speed and cadence measurement interval (milliseconds). */
 #define SPEED_AND_CADENCE_MEAS_INTERVAL 2000

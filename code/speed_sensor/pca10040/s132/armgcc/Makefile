@@ -9,7 +9,7 @@ SOFTDEVICE_HEX_DIR := $(SDK_ROOT)/components/softdevice/s132/hex
 DFU_HEX_DIR := ../../../../speed_dfu/secure_bootloader/pca10040_ble/armgcc/_build
 PROJ_DIR := ../../..
 
-$(OUTPUT_DIRECTORY)/LezyneSPD.out: \
+$(OUTPUT_DIRECTORY)/$(TARGETS).out: \
   LINKER_SCRIPT  := ble_app_cscs_gcc_nrf52.ld
 
 # Source files common to all targets
@@ -94,6 +94,8 @@ SRC_FILES += \
   $(SDK_ROOT)/components/ble/ble_services/ble_dfu/ble_dfu.c \
   $(SDK_ROOT)/components/ble/ble_services/ble_dfu/ble_dfu_bonded.c \
   $(SDK_ROOT)/components/ble/ble_services/ble_dfu/ble_dfu_unbonded.c \
+  $(SDK_ROOT)/components/ble/ble_services/ble_nus/ble_nus.c \
+  $(SDK_ROOT)/components/ble/ble_link_ctx_manager/ble_link_ctx_manager.c \
   $(SDK_ROOT)/components/softdevice/common/nrf_sdh.c \
   $(SDK_ROOT)/components/softdevice/common/nrf_sdh_ble.c \
   $(SDK_ROOT)/components/softdevice/common/nrf_sdh_soc.c \
@@ -112,6 +114,8 @@ INC_FOLDERS += \
   $(SDK_ROOT)/components/libraries/usbd/class/msc \
   $(SDK_ROOT)/components/libraries/usbd/class/hid \
   $(SDK_ROOT)/modules/nrfx/hal \
+  $(SDK_ROOT)/components/ble/ble_link_ctx_manager \
+  $(SDK_ROOT)/components/ble/ble_services/ble_nus \
   $(SDK_ROOT)/components/nfc/ndef/conn_hand_parser/le_oob_rec_parser \
   $(SDK_ROOT)/components/libraries/log \
   $(SDK_ROOT)/components/ble/ble_services/ble_gls \
@@ -303,10 +307,10 @@ LDFLAGS += -Wl,--gc-sections
 # use newlib in nano version
 LDFLAGS += --specs=nano.specs
 
-LezyneSPD: CFLAGS += -D__HEAP_SIZE=8192
-LezyneSPD: CFLAGS += -D__STACK_SIZE=8192
-LezyneSPD: ASMFLAGS += -D__HEAP_SIZE=8192
-LezyneSPD: ASMFLAGS += -D__STACK_SIZE=8192
+$(TARGETS): CFLAGS += -D__HEAP_SIZE=8192
+$(TARGETS): CFLAGS += -D__STACK_SIZE=8192
+$(TARGETS): ASMFLAGS += -D__HEAP_SIZE=8192
+$(TARGETS): ASMFLAGS += -D__STACK_SIZE=8192
 
 # Add standard libraries at the very end of the linker input, after all objects
 # that may need symbols provided by these libraries.
@@ -316,12 +320,12 @@ LIB_FILES += -lc -lnosys -lm
 .PHONY: default help
 
 # Default target - first one defined
-default: LezyneSPD
+default: $(TARGETS)
 
 # Print all targets that can be built
 help:
 	@echo following targets are available:
-	@echo		LezyneSPD
+	@echo		$(TARGETS)
 	@echo		flash_softdevice
 	@echo		sdk_config - starting external tool for editing sdk_config.h
 	@echo		flash      - flashing binary
@@ -337,8 +341,8 @@ $(foreach target, $(TARGETS), $(call define_target, $(target)))
 
 # Flash the program
 flash: default
-	@echo Flashing: $(OUTPUT_DIRECTORY)/LezyneSPD.hex
-	nrfjprog -f nrf52 --program $(OUTPUT_DIRECTORY)/LezyneSPD.hex --sectorerase
+	@echo Flashing: $(OUTPUT_DIRECTORY)/$(TARGETS).hex
+	nrfjprog -f nrf52 --program $(OUTPUT_DIRECTORY)/$(TARGETS).hex --sectorerase
 	nrfjprog -f nrf52 --reset
 
 # Flash softdevice

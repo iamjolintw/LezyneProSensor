@@ -63,7 +63,7 @@ typedef enum{
 	eSTEP_RESET,
 	eSTEP_START_PEAK,
 	eSTEP_PEAK_DETECT,
-	eSTEP_STRAT_VALLEY,
+	eSTEP_START_VALLEY,
 	eSTEP_VALLEY_DETECT,
 	eSTEP_STEP_DETECT,
 
@@ -92,12 +92,12 @@ typedef enum {
 	ACCE_SPEED_MAX 		= 0x04
 }t_accel_speed_flag;
 
-#define DEF_MAX_ANGLE_WINDOW    85  // 75 +10 degree equal 85Km/hr in 50 hz ODR
-#define DEF_ANGLE_90_DEGREE    	90  //
-#define DEF_ANGLE_180_DEGREE    180  //
-#define DEF_ANGLE_180_DEGREE    180  //
-#define DEF_ANGLE_270_DEGREE    270  //
-#define DEF_ANGLE_360_DEGREE    360  //
+#define DEF_MAX_ANGLE_WINDOW    85  	// 75 +10 degree equal 85Km/hr in 50 hz ODR
+#define DEF_ANGLE_90_DEGREE    	90  	//
+#define DEF_ANGLE_180_DEGREE    180  	//
+#define DEF_ANGLE_180_DEGREE    180  	//
+#define DEF_ANGLE_270_DEGREE    270  	//
+#define DEF_ANGLE_360_DEGREE    360  	//
 /* defination a invalid angle for first time calculate lap*/
 #define DEF_INVALID_LAST_ANGLE 	-999	//
 /* defination of ratio of the circumference of a circle to its diameter*/
@@ -109,8 +109,8 @@ typedef enum {
 /* accelerometer sensitivity setting, note: the maximum of supported sensitivity of MMA8652 is 8G */
 //#define ACCELEROMETER_SENSITIVITY_2G_SUPPORT
 //#define ACCELEROMETER_SENSITIVITY_4G_SUPPORT
-#define ACCELEROMETER_SENSITIVITY_8G_SUPPORT
-//#define ACCELEROMETER_SENSITIVITY_16G_SUPPORT
+//#define ACCELEROMETER_SENSITIVITY_8G_SUPPORT
+#define ACCELEROMETER_SENSITIVITY_16G_SUPPORT
 
 #ifdef ACCELEROMETER_SENSITIVITY_2G_SUPPORT
 	#ifndef ACC_ST16G_ENABLE
