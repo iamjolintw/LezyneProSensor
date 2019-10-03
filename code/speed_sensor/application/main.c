@@ -8,6 +8,7 @@
 #include <stdbool.h>
 #include "ble_core.h"
 #include "sensor_accelerometer.h"
+#include "analog.h"
 
 #include "nrf_pwr_mgmt.h"
 #include "nrf_log.h"

@@ -92,6 +92,14 @@ typedef enum {
 	ACCE_SPEED_MAX 		= 0x04
 }t_accel_speed_flag;
 
+/* pending Task event */
+typedef enum {
+	ACCE_SAMPLES_NOMRAL 	= 0x00,
+	ACCE_SAMPLES_LONG 		= 0x01,
+	ACCE_SAMPLES_SHORT 		= 0x02
+}t_accel_sample_counter;
+
+
 #define DEF_MAX_ANGLE_WINDOW    85  	// 75 +10 degree equal 85Km/hr in 50 hz ODR
 #define DEF_ANGLE_90_DEGREE    	90  	//
 #define DEF_ANGLE_180_DEGREE    180  	//

@@ -90,6 +90,7 @@
 #define LIS2DE12_REG1_Y_AXIS         0x02
 #define LIS2DE12_REG1_X_AXIS         0x01
 #define LIS2DE12_REG1_ALL_AXES       0x07
+#define LIS2DE12_REG1_YZ_AXES        0x06
 //
 #define LIS2DE12_REG2                0x21
 #define LIS2DE12_REG2_HPF_NORMAL     0x00

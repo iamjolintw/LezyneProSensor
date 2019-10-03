@@ -65,9 +65,9 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(ACC_TWI_INSTANCE_ID
 #define ACCEL_FF_MT_DEBOUNCE_COUNT 				6
 #else
 /* Threshold = 0x9; The step count is 0.127g/ count,  (1.05g/0.127g ~= 8) */
-#define ACCEL_FF_MT_THS_VALUE  					9
+#define ACCEL_FF_MT_THS_VALUE  					8
 /* Set the debounce counter to eliminate false readings */
-#define ACCEL_FF_MT_DEBOUNCE_COUNT 				3
+#define ACCEL_FF_MT_DEBOUNCE_COUNT 				0
 #endif
 /* Set compensate time */
 #define ACCEL_PROCESS_COMPENSATE_TIME 			1		// unit:ms
@@ -103,7 +103,7 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(ACC_TWI_INSTANCE_ID
 APP_TIMER_DEF(m_csc_meas_timer_id);                                                 /**< CSC measurement timer. */
 
 /* 12bit xyz fifo data */
-static uint8_t accel_buff[6*DEF_WATERMARK_VAL+12] = {0};
+static uint8_t accel_buff[6*DEF_WATERMARK_VAL] = {0};
 /* Pending task indicator */
 static t_accel_task_pending task_pending_singal = {0};
 /* Protector for critical global variable */
@@ -602,8 +602,8 @@ static void accel_configuration(void)
 	accel_lis2de12_reset_reg();
 	nrf_delay_ms(50);
 
-	/* Enable All axes and 50hrz data, enable the sensor */
-	accel_write_reg(LIS2DE12_REG1, ACCEL_LIS2DE12_DATARATE | LIS2DE12_REG1_ALL_AXES);
+	/* Enable YZ axes and 10hrz data, enable the sensor */
+	accel_write_reg(LIS2DE12_REG1, ACCEL_LIS2DE12_LMP_DATARATE | LIS2DE12_REG1_LOW_POWER | LIS2DE12_REG1_ALL_AXES);
 	/* FIFO bypass, on INT2 */
 	accel_write_reg(LIS2DE12_FIFO_CTRL_REG, DEF_WATERMARK_VAL);
 	/* Enable the FIFO Watermark Interrupt and Set it to INT1 */
@@ -612,8 +612,8 @@ static void accel_configuration(void)
 	accel_write_reg(LIS2DE12_REG4, LIS2DE12_REG4_BDU_READ | ACCEL_FULL_SCALE_REG | LIS2DE12_REG4_HR_MSK);
 	/* Use the FIFO */
 	accel_write_reg(LIS2DE12_REG5, LIS2DE12_REG5_USE_FIFO);
-	/* Motion detection, using XYZ */
-	accel_write_reg(LIS2DE12_INT1_CFG_REG, LIS2DE12_INT1_CFG_ZHIE_MSK | LIS2DE12_INT1_CFG_YHIE_MSK | LIS2DE12_INT1_CFG_XHIE_MSK);
+	/* Motion detection, using YZ */
+	accel_write_reg(LIS2DE12_INT1_CFG_REG, LIS2DE12_INT1_CFG_ZHIE_MSK | LIS2DE12_INT1_CFG_YHIE_MSK);
 	accel_write_reg(LIS2DE12_INT1_THRESHHOLD_REG, ACCEL_FF_MT_THS_VALUE);
 	accel_write_reg(LIS2DE12_INT1_DURATION_REG, ACCEL_FF_MT_DEBOUNCE_COUNT);
 #endif
@@ -875,7 +875,7 @@ void accel_wake_up(void)
 	nrf_delay_ms(50);
 #else
 	uint8_t ui8_temp;
-	accel_write_reg(LIS2DE12_REG1, ACCEL_LIS2DE12_DATARATE | LIS2DE12_REG1_ALL_AXES);
+	//accel_write_reg(LIS2DE12_REG1, ACCEL_LIS2DE12_DATARATE | LIS2DE12_REG1_ALL_AXES);
 	nrf_delay_ms(50);
 	accel_read_reg(LIS2DE12_INT_REFERENCE, &ui8_temp);
 #endif
@@ -1225,7 +1225,7 @@ static void acc_step_mag_update(float mag_update_value)
 	}
 	else if(acc_speed_high_flag == ACCE_SPEED_MIDHIGH)
 	{
-		filter_window 	= MAX_FILTER_WINDOW_HIGH_SPEED;
+		filter_window 	= (MAX_FILTER_WINDOW_HIGH_SPEED + MAX_FILTER_WINDOW_LOW_SPEED )/2;
 		low_pass_factor = LOW_PASS_FACTOR_MIDHIGH_SPEED;
 		average_factor 	= AVERAGE_FACTOR_MIDHIGH_SPEED;
 		limited_factor  = LIMITED_FACTOR_MIDHIGH_SPEED;
@@ -1323,12 +1323,12 @@ static void acc_step_mag_update(float mag_update_value)
 					static uint32_t ui32_last_sample_counter  = ACCE_LAST_SAMPLE_COUNTER_MAX;
 					uint32_t sample_diff = ui32_step_sample_counter - ui32_step_detect_number;
 					/* current sample number should bigger than last_sample_counter/2 + 1, but not in high speed stage */
-					if((sample_diff > (ui32_last_sample_counter/2) + 1) || (ui32_last_sample_counter < ACCE_LAST_SAMPLE_COUNTER_MIN) || (ui32_last_sample_counter > ACCE_LAST_SAMPLE_COUNTER_MAX))
+					if((sample_diff > (ui32_last_sample_counter * 0.5) + 1) || (ui32_last_sample_counter < ACCE_LAST_SAMPLE_COUNTER_MIN) || (ui32_last_sample_counter > ACCE_LAST_SAMPLE_COUNTER_MAX))
 					{
 						/* Update total lap and event happened sample number */
 						ui32_total_step++;
 						ui32_step_detect_number = ui32_step_sample_counter;
-						if (sample_diff > ui32_last_sample_counter * 2)
+						if ((sample_diff > ui32_last_sample_counter * 2) && mid_speed_flag_get())
 							ui32_total_step++; // makeup missed judgment
 						ui32_last_sample_counter = (sample_diff + ui32_last_sample_counter) / 2;
 						/* Set speed flag */
@@ -1472,8 +1472,8 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 	}
 	p_measurement->is_wheel_rev_data_present = true;
 	p_measurement->is_crank_rev_data_present = false;
-	p_measurement->cumulative_wheel_revs = ui32_total_step;
-	p_measurement->last_wheel_event_time = (uint16_t)ui16_wheel_event_time;
+	p_measurement->cumulative_wheel_revs 	 = ui32_total_step;
+	p_measurement->last_wheel_event_time 	 = (uint16_t)ui16_wheel_event_time;
 
 #ifdef SENSOR_DEBUG_OUTPUT
 	/* speed calculation */
