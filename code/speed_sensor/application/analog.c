@@ -23,22 +23,49 @@
 #include "nrf_delay.h"
 
 
-#define SAMPLES_IN_BUFFER 		(1)
-#ifndef CSCS_MOCK_ENABLE
-#define SAMPLES_TRIGGER_TIMER	(10000)	// unit:ms
-#define BAT_AVERAGE_COUNTER		(8)		// the average number of battery value
-#else
-#define SAMPLES_TRIGGER_TIMER	(1000)	// unit:ms
-#define BAT_AVERAGE_COUNTER		(2)		// the average number of battery value
-#endif
+#define SAMPLES_IN_BUFFER 			(1)
+#define SAMPLES_TRIGGER_TIMER		(10000)	// unit:ms
+#define SAMPLES_TRIGGER_FAST_TIMER	(100)	// unit:ms
+#define BAT_AVERAGE_COUNTER			(8)		// the average number of battery value
 
 static const nrf_drv_timer_t 	m_timer = NRF_DRV_TIMER_INSTANCE(1);
 static nrf_saadc_value_t     	m_buffer_pool[2][SAMPLES_IN_BUFFER];
 static nrf_ppi_channel_t     	m_ppi_channel;
 static uint32_t 				batt_adc_sum = PERCENT_OVER_90;
+static bool						b_done_first_time = false;
 
 // functions
 static void bat_percent_lookup(uint32_t battery_level);
+static void set_timer(uint32_t sample_timer);
+
+/**
+ * @brief Function for set timer.
+ */
+static void set_timer(uint32_t sample_timer)
+{
+	ret_code_t err_code;
+
+	if (nrf_drv_timer_is_enabled(&m_timer))
+		nrf_drv_timer_disable(&m_timer);
+	/* setup m_timer for compare event every sample_timer */
+	uint32_t ticks = nrf_drv_timer_ms_to_ticks(&m_timer, sample_timer);
+	nrf_drv_timer_extended_compare(&m_timer,
+			 	 	 	 	 	 	 NRF_TIMER_CC_CHANNEL1,
+									 ticks,
+									 NRF_TIMER_SHORT_COMPARE1_CLEAR_MASK,
+									 false);
+	nrf_drv_timer_enable(&m_timer);
+	uint32_t timer_compare_event_addr = nrf_drv_timer_compare_event_address_get(&m_timer,
+			 	 	 	 	 	 	 NRF_TIMER_CC_CHANNEL1);
+	uint32_t saadc_sample_task_addr   = nrf_drv_saadc_sample_task_get();
+    /* setup ppi channel so that timer compare event is triggering sample task in SAADC */
+    err_code = nrf_drv_ppi_channel_alloc(&m_ppi_channel);
+    APP_ERROR_CHECK(err_code);
+    err_code = nrf_drv_ppi_channel_assign(m_ppi_channel,
+                                          timer_compare_event_addr,
+                                          saadc_sample_task_addr);
+    APP_ERROR_CHECK(err_code);
+}
 
 /**
  * @brief Function for SAADC converter.
@@ -92,7 +119,7 @@ static void bat_percent_lookup(uint32_t battery_level)
         new_batt = 0;
     }
 
-    //NRF_LOG_INFO("battery = %d", new_batt);
+    NRF_LOG_INFO("battery_level = %d, battery = %d", battery_level, new_batt);
     battery_level_update(new_batt);
 }
 
@@ -113,7 +140,6 @@ void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
         for (uint8_t i = 0; i < SAMPLES_IN_BUFFER; i++)
         {
         	// get data from buffer
-            //NRF_LOG_INFO("saadc data: %d", p_event->data.done.p_buffer[i]);
 #ifndef CSCS_MOCK_ENABLE
             batt_adc_sum += p_event->data.done.p_buffer[i];
 #else
@@ -122,7 +148,6 @@ void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
             if (fake_data < (PERCENT_0 - 50))
             	fake_data = (PERCENT_OVER_90 + 50);
             batt_adc_sum += fake_data;
-            //NRF_LOG_INFO("fake data: %d, batt_adc_sum = %d", fake_data, batt_adc_sum);
 #endif
             get_batt_count++;
 
@@ -137,6 +162,12 @@ void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
 
             	// report to the air
             	bat_percent_lookup(batt_adc_sum);
+
+            	// set flag
+            	if (!b_done_first_time) {
+            		set_timer(SAMPLES_TRIGGER_TIMER);
+            		b_done_first_time = true;
+            	}
             }
         }
     }
@@ -172,26 +203,8 @@ void saadc_sampling_event_init(void)
     err_code = nrf_drv_timer_init(&m_timer, &timer_cfg, timer_handler);
     APP_ERROR_CHECK(err_code);
 
-    /* setup m_timer for compare event every 400ms */
-    uint32_t ticks = nrf_drv_timer_ms_to_ticks(&m_timer, SAMPLES_TRIGGER_TIMER);
-    nrf_drv_timer_extended_compare(&m_timer,
-                                   NRF_TIMER_CC_CHANNEL1,
-                                   ticks,
-                                   NRF_TIMER_SHORT_COMPARE1_CLEAR_MASK,
-                                   false);
-    nrf_drv_timer_enable(&m_timer);
-    uint32_t timer_compare_event_addr = nrf_drv_timer_compare_event_address_get(&m_timer,
-                                                                                NRF_TIMER_CC_CHANNEL1);
-    uint32_t saadc_sample_task_addr   = nrf_drv_saadc_sample_task_get();
-
-    /* setup ppi channel so that timer compare event is triggering sample task in SAADC */
-    err_code = nrf_drv_ppi_channel_alloc(&m_ppi_channel);
-    APP_ERROR_CHECK(err_code);
-
-    err_code = nrf_drv_ppi_channel_assign(m_ppi_channel,
-                                          timer_compare_event_addr,
-                                          saadc_sample_task_addr);
-    APP_ERROR_CHECK(err_code);
+    /* setup m_timer for compare event every SAMPLES_TRIGGER_FAST_TIMER */
+    set_timer(SAMPLES_TRIGGER_FAST_TIMER);
 }
 
 /**
