@@ -23,6 +23,7 @@ void sensor_simulator_init(void);
 #endif
 void accel_csc_meas_timeout_handler(void * p_context);
 uint32_t accel_csc_meas_timeout_handler2(ble_cscs_meas_t p_context);
+void accel_nus_data_push(int16_t *i16BufData);
 
 #endif // BLE_CORE_H
 

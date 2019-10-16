@@ -7,6 +7,7 @@ MEMORY
 {
   FLASH (rx) : ORIGIN = 0x26000, LENGTH = 0x5a000
   RAM (rwx) :  ORIGIN = 0x20003788, LENGTH = 0xc878
+  UICR_NFCPINS(r) : ORIGIN = 0x1000120C, LENGTH = 0x04
 }
 
 SECTIONS
@@ -31,6 +32,10 @@ SECTIONS
     KEEP(*(.fs_data))
     PROVIDE(__stop_fs_data = .);
   } > RAM
+  .uicrNfcPinsAddress : 
+  { 
+     KEEP(*(.uicrNfcPinsAddress)) 
+  } > UICR_NFCPINS
   .log_dynamic_data :
   {
     PROVIDE(__start_log_dynamic_data = .);

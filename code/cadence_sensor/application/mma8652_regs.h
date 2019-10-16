@@ -25,7 +25,7 @@ enum
 	MMA8652_OUT_X_MSB,              // 0x01
 	MMA8652_OUT_X_LSB,              // 0x02
 	MMA8652_OUT_Y_MSB,              // 0x03
-	MMA8652_OUT_Y_lSB,              // 0x04
+	MMA8652_OUT_Y_LSB,              // 0x04
 	MMA8652_OUT_Z_MSB,              // 0x05
 	MMA8652_OUT_Z_LSB,              // 0x06
 	MMA8652_RSVD_0,                 // 0x07

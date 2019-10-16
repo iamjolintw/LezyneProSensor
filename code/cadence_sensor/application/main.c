@@ -48,7 +48,6 @@ static void log_init(void)
     NRF_LOG_DEFAULT_BACKENDS_INIT();
 }
 
-
 /**@brief Function for handling the idle state (main loop).
  *
  * @details If there is no pending log operation, then sleep until next the next event occurs.
@@ -87,14 +86,14 @@ static void gpio_model_init(void)
  */
 int main(void)
 {
-    // Initialize.
+    // Log Initialize.
     log_init();
     NRF_LOG_INFO("ble initialize.");
 
     // BLE Initialize.
 	ble_init();
 
-    /* GPIO Initialize */
+    // GPIO Initialize.
 	gpio_model_init();
 
 	// Accelerometer Initialize.
