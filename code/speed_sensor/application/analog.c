@@ -24,14 +24,15 @@
 
 
 #define SAMPLES_IN_BUFFER 			(1)
-#define SAMPLES_TRIGGER_TIMER		(10000)	// unit:ms
-#define SAMPLES_TRIGGER_FAST_TIMER	(100)	// unit:ms
-#define BAT_AVERAGE_COUNTER			(8)		// the average number of battery value
+#define SAMPLES_TRIGGER_TIMER		(1000)	// unit:ms
+#define SAMPLES_TRIGGER_FAST_TIMER	(5)		// unit:ms
+#define BAT_AVERAGE_COUNTER			(100)	// the average number of battery value
 
 static const nrf_drv_timer_t 	m_timer = NRF_DRV_TIMER_INSTANCE(1);
 static nrf_saadc_value_t     	m_buffer_pool[2][SAMPLES_IN_BUFFER];
 static nrf_ppi_channel_t     	m_ppi_channel;
 static uint32_t 				batt_adc_sum = PERCENT_OVER_90;
+static uint32_t					old_batt_adc_sum = PERCENT_OVER_90;
 static bool						b_done_first_time = false;
 
 // functions
@@ -161,7 +162,13 @@ void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
             	batt_adc_sum = batt_adc_sum / (BAT_AVERAGE_COUNTER + 1);
 
             	// report to the air
-            	bat_percent_lookup(batt_adc_sum);
+                if (old_batt_adc_sum > batt_adc_sum)
+                {
+                	// update batt_adc_sum
+                	old_batt_adc_sum = batt_adc_sum;
+                	// report to the air
+                	bat_percent_lookup(batt_adc_sum);
+                }
 
             	// set flag
             	if (!b_done_first_time) {
@@ -217,6 +224,7 @@ void saadc_init(void)
     nrf_saadc_channel_config_t channel_config =
         NRF_DRV_SAADC_DEFAULT_CHANNEL_CONFIG_SE(NRF_SAADC_INPUT_VDD);
 
+    saadc_config.low_power_mode = true;
     saadc_config.resolution = SAADC_RESOLUTION_VAL_10bit;
     saadc_config.oversample = NRF_SAADC_OVERSAMPLE_DISABLED;
     saadc_config.interrupt_priority = APP_IRQ_PRIORITY_LOW;
@@ -231,9 +239,6 @@ void saadc_init(void)
     APP_ERROR_CHECK(err_code);
 
     err_code = nrf_drv_saadc_buffer_convert(m_buffer_pool[0], SAMPLES_IN_BUFFER);
-    APP_ERROR_CHECK(err_code);
-
-    err_code = nrf_drv_saadc_buffer_convert(m_buffer_pool[1], SAMPLES_IN_BUFFER);
     APP_ERROR_CHECK(err_code);
 }
 
