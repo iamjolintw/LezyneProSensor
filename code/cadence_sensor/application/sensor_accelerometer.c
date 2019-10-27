@@ -1280,7 +1280,7 @@ static void acc_step_mag_update(float mag_update_value)
 	#define LIMITED_FACTOR_HIGH_SPEED			0.86f
 
 	/* window */
-	#define MAX_FILTER_WINDOW_LOW_SPEED   		0.40f
+	#define MAX_FILTER_WINDOW_LOW_SPEED   		0.45f
 	#define MAX_FILTER_WINDOW_HIGH_SPEED   		0.20f
 
 	/* window offset*/
