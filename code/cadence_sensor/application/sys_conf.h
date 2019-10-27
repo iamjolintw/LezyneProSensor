@@ -45,7 +45,7 @@
 #define APP_ADV_DURATION                18000                                       /**< The advertising duration (180 seconds) in units of 10 milliseconds. */
 
 /* Speed and cadence measurement interval (milliseconds). */
-#define SPEED_AND_CADENCE_MEAS_INTERVAL 2000
+#define SPEED_AND_CADENCE_MEAS_INTERVAL 1000
 
 #define WHEEL_CIRCUMFERENCE_MM          2100                                        /**< Simulated wheel circumference in millimeters. */
 
