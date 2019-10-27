@@ -58,6 +58,7 @@
 #include "sys_conf.h"
 #include "ble_core.h"
 #include "sensor_accelerometer.h"
+#include "analog.h"
 
 #include "nordic_common.h"
 #include "nrf.h"
@@ -470,7 +471,6 @@ static void gap_params_init(void)
 	APP_ERROR_CHECK(err_code);
 #endif
 
-    //err_code = sd_ble_gap_appearance_set(BLE_APPEARANCE_CYCLING_SPEED_CADENCE_SENSOR);
 	err_code = sd_ble_gap_appearance_set(BLE_APPEARANCE_CYCLING_CADENCE_SENSOR);
     APP_ERROR_CHECK(err_code);
 
@@ -561,8 +561,6 @@ static void services_init(void)
     memset(&cscs_init, 0, sizeof(cscs_init));
 
     cscs_init.evt_handler = NULL;
-    //cscs_init.feature     = BLE_CSCS_FEATURE_WHEEL_REV_BIT | BLE_CSCS_FEATURE_CRANK_REV_BIT |
-    //                        BLE_CSCS_FEATURE_MULTIPLE_SENSORS_BIT;
     cscs_init.feature     = BLE_CSCS_FEATURE_CRANK_REV_BIT | BLE_CSCS_FEATURE_MULTIPLE_SENSORS_BIT;
 
     // Here the sec level for the Cycling Speed and Cadence Service can be changed/increased.
@@ -722,7 +720,7 @@ static void on_adv_evt(ble_adv_evt_t ble_adv_evt)
         case BLE_ADV_EVT_IDLE:
         {
             uint32_t    periph_link_cnt = ble_conn_state_peripheral_conn_count(); // Number of peripheral links.
-            if (periph_link_cnt)
+            if ((periph_link_cnt != NRF_SDH_BLE_PERIPHERAL_LINK_COUNT) && (periph_link_cnt))
             {
             	NRF_LOG_INFO("Idle - re-advertising");
             	advertising_start();
@@ -785,7 +783,7 @@ static void on_disconnected(ble_gap_evt_t const * const p_gap_evt)
                  p_gap_evt->conn_handle,
                  p_gap_evt->params.disconnected.reason);
 
-    if (periph_link_cnt == (NRF_SDH_BLE_PERIPHERAL_LINK_COUNT - 1))
+    if (periph_link_cnt < NRF_SDH_BLE_PERIPHERAL_LINK_COUNT)
     {
         // Advertising is not running when all connections are taken, and must therefore be started.
         advertising_start();
@@ -801,24 +799,37 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
 {
     ret_code_t err_code = NRF_SUCCESS;
 
+	ble_conn_state_conn_handle_list_t conn_handles = ble_conn_state_periph_handles();
+
     switch (p_ble_evt->header.evt_id)
     {
         case BLE_GAP_EVT_CONNECTED:
             on_connected(&p_ble_evt->evt.gap_evt);
         	err_code = bsp_indication_set(BSP_INDICATE_CONNECTED);
         	APP_ERROR_CHECK(err_code);
+
+        	if (conn_handles.len == 1)	// only for fist connection
+        	{
 #ifndef CSCS_MOCK_ENABLE
-            /* activate accelerometer */
-            accel_set_active();
+				/* activate accelerometer */
+				accel_set_active();
 #endif
+				/* activate saadc for battery measurement */
+				bat_init();
+        	}
             break;
 
         case BLE_GAP_EVT_DISCONNECTED:
             on_disconnected(&p_ble_evt->evt.gap_evt);
+        	if (conn_handles.len == 0)	// for only one connection left
+        	{
 #ifndef CSCS_MOCK_ENABLE
-            /* deactivate accelerometer */
-            accel_set_deactive();
+				/* deactivate accelerometer */
+				accel_set_deactive();
 #endif
+				/* deactivate saadc for battery measurement */
+				bat_sleep();
+        	}
             break;
 
         case BLE_GAP_EVT_PHY_UPDATE_REQUEST:
@@ -998,7 +1009,7 @@ static void advertising_init(void)
     // Set manufacturing data
     ble_advdata_manuf_data_t			manuf_data;
     uint8_t data[]						= MANUFACTURER_VERSION;
-    manuf_data.company_identifier		= 0x00;
+    manuf_data.company_identifier		= 0xFFFF;
     manuf_data.data.p_data				= data;
     manuf_data.data.size				= 2;//sizeof(data);
     init.advdata.p_manuf_specific_data	= &manuf_data;
@@ -1035,8 +1046,8 @@ static void advertising_start(void)
     ret_code_t err_code;
 
     err_code = ble_advertising_start(&m_advertising, BLE_ADV_MODE_FAST);
-
-    APP_ERROR_CHECK(err_code);
+    NRF_LOG_INFO("Advertising. error: %x", err_code);
+    //APP_ERROR_CHECK(err_code);
 }
 
 /**@brief Function to return the status of connection.
@@ -1237,6 +1248,30 @@ uint32_t accel_csc_meas_timeout_handler2(ble_cscs_meas_t p_context)
     return err_code;
 }
 
+/**@brief Function for performing battery measurement and updating the Battery Level characteristic
+ *        in Battery Service.
+ */
+void battery_level_update(uint8_t  battery_level)
+{
+    ret_code_t err_code;
+
+    if (ble_connection_status())
+	{
+    	//NRF_LOG_INFO( "battery_level_update");
+
+		err_code = ble_bas_battery_level_update(&m_bas, battery_level, BLE_CONN_HANDLE_ALL);
+		if ((err_code != NRF_SUCCESS) &&
+			(err_code != NRF_ERROR_INVALID_STATE) &&
+			(err_code != NRF_ERROR_RESOURCES) &&
+			(err_code != NRF_ERROR_BUSY) &&
+			(err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)
+		   )
+		{
+			APP_ERROR_HANDLER(err_code);
+		}
+    }
+}
+
 #ifdef ACCELEROMETER_DUMP_FIFO
 /**@brief Function for customize data push.
  */
@@ -1286,4 +1321,3 @@ void accel_nus_data_push(int16_t *i16BufData)
 /**
  * @}
  */
-

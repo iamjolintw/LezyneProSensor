@@ -9,7 +9,7 @@ SOFTDEVICE_HEX_DIR := $(SDK_ROOT)/components/softdevice/s132/hex
 DFU_HEX_DIR := ../../../../cadence_dfu/secure_bootloader/pca10040_ble/armgcc/_build
 PROJ_DIR := ../../..
 
-$(OUTPUT_DIRECTORY)/LezyneCAD.out: \
+$(OUTPUT_DIRECTORY)/$(TARGETS).out: \
   LINKER_SCRIPT  := ble_app_cscs_gcc_nrf52.ld
 
 # Source files common to all targets
@@ -65,6 +65,7 @@ SRC_FILES += \
   $(PROJ_DIR)/application/main.c \
   $(PROJ_DIR)/application/ble_core.c \
   $(PROJ_DIR)/application/sensor_accelerometer.c \
+  $(PROJ_DIR)/application/analog.c \
   $(SDK_ROOT)/external/segger_rtt/SEGGER_RTT.c \
   $(SDK_ROOT)/external/segger_rtt/SEGGER_RTT_Syscalls_GCC.c \
   $(SDK_ROOT)/external/segger_rtt/SEGGER_RTT_printf.c \
@@ -100,6 +101,10 @@ SRC_FILES += \
   $(SDK_ROOT)/components/softdevice/common/nrf_sdh_ble.c \
   $(SDK_ROOT)/components/softdevice/common/nrf_sdh_soc.c \
   $(SDK_ROOT)/components/ble/ble_services/ble_bas/ble_bas.c \
+  $(SDK_ROOT)/modules/nrfx/drivers/src/nrfx_saadc.c \
+  $(SDK_ROOT)/modules/nrfx/drivers/src/nrfx_timer.c \
+  $(SDK_ROOT)/modules/nrfx/drivers/src/nrfx_ppi.c \
+  $(SDK_ROOT)/integration/nrfx/legacy/nrf_drv_ppi.c \
 
 # Include folders common to all targets
 INC_FOLDERS += \
@@ -241,6 +246,7 @@ INC_FOLDERS += \
   $(SDK_ROOT)/components/libraries/stack_guard \
   $(SDK_ROOT)/components/libraries/log/src \
   $(SDK_ROOT)/components/libraries/svc \
+  $(SDK_ROOT)/modules/nrfx/drivers/src/
 
 # Libraries common to all targets
 LIB_FILES += \
@@ -273,7 +279,7 @@ CFLAGS += -mfloat-abi=hard -mfpu=fpv4-sp-d16
 CFLAGS += -ffunction-sections -fdata-sections -fno-strict-aliasing
 CFLAGS += -fno-builtin -fshort-enums
 CFLAGS += -DCONFIG_NFCT_PINS_AS_GPIOS
-CFLAGS += -DDEBUG
+#CFLAGS += -DDEBUG
 
 # C++ flags common to all targets
 CXXFLAGS += $(OPT)
@@ -308,10 +314,10 @@ LDFLAGS += -Wl,--gc-sections
 # use newlib in nano version
 LDFLAGS += --specs=nano.specs
 
-LezyneCAD: CFLAGS += -D__HEAP_SIZE=8192
-LezyneCAD: CFLAGS += -D__STACK_SIZE=8192
-LezyneCAD: ASMFLAGS += -D__HEAP_SIZE=8192
-LezyneCAD: ASMFLAGS += -D__STACK_SIZE=8192
+$(TARGETS): CFLAGS += -D__HEAP_SIZE=8192
+$(TARGETS): CFLAGS += -D__STACK_SIZE=8192
+$(TARGETS): ASMFLAGS += -D__HEAP_SIZE=8192
+$(TARGETS): ASMFLAGS += -D__STACK_SIZE=8192
 
 # Add standard libraries at the very end of the linker input, after all objects
 # that may need symbols provided by these libraries.
@@ -321,12 +327,12 @@ LIB_FILES += -lc -lnosys -lm
 .PHONY: default help
 
 # Default target - first one defined
-default: LezyneCAD
+default: $(TARGETS)
 
 # Print all targets that can be built
 help:
 	@echo following targets are available:
-	@echo		LezyneCAD
+	@echo		$(TARGETS)
 	@echo		flash_softdevice
 	@echo		sdk_config - starting external tool for editing sdk_config.h
 	@echo		flash      - flashing binary
@@ -342,8 +348,8 @@ $(foreach target, $(TARGETS), $(call define_target, $(target)))
 
 # Flash the program
 flash: default
-	@echo Flashing: $(OUTPUT_DIRECTORY)/LezyneCAD.hex
-	nrfjprog -f nrf52 --program $(OUTPUT_DIRECTORY)/LezyneCAD.hex --sectorerase
+	@echo Flashing: $(OUTPUT_DIRECTORY)/$(TARGETS).hex
+	nrfjprog -f nrf52 --program $(OUTPUT_DIRECTORY)/$(TARGETS).hex --sectorerase
 	nrfjprog -f nrf52 --reset
 
 # Flash softdevice

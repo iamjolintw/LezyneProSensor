@@ -597,6 +597,7 @@ static void accel_configuration(void)
 	if(who_n_i != LIS2DE12_WHO_AM_I_OUT)
 	{
 		NRF_LOG_ERROR(" Device ID not match!! : who_n_i: 0x%x", who_n_i);
+		nrf_drv_gpiote_out_clear(ACC_LEDR_PIN);
 		return;
 	}
 	else
@@ -627,6 +628,9 @@ static void accel_configuration(void)
     /* Set back to active and wake up */
 	accel_wake_up();
 	accel_display_reg();
+
+	/* Turn off the Red light (low enable) once finishing the communication with accelerometer */
+	nrf_drv_gpiote_out_set(ACC_LEDR_PIN);
 }
 
 #ifdef ACC_ST16G_ENABLE
