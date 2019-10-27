@@ -19,7 +19,6 @@
 #define PERCENT_OVER_10  	558	// > 1.96v
 #define PERCENT_0   		484	// > 1.70v
 
-
 /* FUNCTION */
 void saadc_init(void);
 void bat_init(void);

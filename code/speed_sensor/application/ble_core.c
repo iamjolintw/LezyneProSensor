@@ -812,8 +812,8 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
         	if (conn_handles.len == 1)	// only for fist connection
         	{
 #ifndef CSCS_MOCK_ENABLE
-            /* activate accelerometer */
-            accel_set_active();
+				/* activate accelerometer */
+				accel_set_active();
 #endif
 				/* activate saadc for battery measurement */
 				bat_init();
@@ -869,17 +869,14 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
             break;
 
         case BLE_GATTS_EVT_HVN_TX_COMPLETE:
-        	//NRF_LOG_INFO("GATT Server Tx complete.");
         	complete_flag = true;
         	break;
 
         case BLE_GATTS_EVT_WRITE:
-        	//NRF_LOG_INFO("GATT Server Write.");
         	start_flag = true;
         	break;
 
         default:
-        	//NRF_LOG_INFO("GATT other: 0x%02X.",p_ble_evt->header.evt_id);
             // No implementation needed.
             break;
     }
@@ -1013,7 +1010,7 @@ static void advertising_init(void)
     // Set manufacturing data
     ble_advdata_manuf_data_t			manuf_data;
     uint8_t data[]						= MANUFACTURER_VERSION;
-    manuf_data.company_identifier		= 0x00;
+    manuf_data.company_identifier		= 0xFFFF;
     manuf_data.data.p_data				= data;
     manuf_data.data.size				= 2;//sizeof(data);
     init.advdata.p_manuf_specific_data	= &manuf_data;

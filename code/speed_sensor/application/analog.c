@@ -120,7 +120,7 @@ static void bat_percent_lookup(uint32_t battery_level)
         new_batt = 0;
     }
 
-    NRF_LOG_INFO("battery_level = %d, battery = %d", battery_level, new_batt);
+    //NRF_LOG_INFO("battery = %d", new_batt);
     battery_level_update(new_batt);
 }
 

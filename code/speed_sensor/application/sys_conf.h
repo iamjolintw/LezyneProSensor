@@ -22,7 +22,7 @@
 #define DEVICE_NAME_WITH_SERIAL_NO													/**< switch for enable/disable combination serial number with device name. */
 #define DEVICE_NAME                     "LezyneSPD"	                            	/**< Name of device. Will be included in the advertising data. */
 #define MANUFACTURER_NAME               "LEZYNE"                       				/**< Manufacturer. Will be passed to Device Information Service. */
-#define MANUFACTURER_VERSION			"04"
+#define MANUFACTURER_VERSION			"05"
 
 /* According to iOS "Accessory-Design-Guideines.pdf" Version:
  * 23.6 Connection Parameters - also refer to Bluetooth 4.0 specification.
@@ -62,6 +62,7 @@
 																						BLE_SENSOR_LOCATION_REAR_HUB. */
 
 #define BLE_TX_POWER					(0)											/**< TX power. Default: 0 dB. Value: 4,0,-4,-8,-12,-16,-20,-40. */
+#define GLED_TURN_OFF_TIMER_TICKS		(5000)										/**< Timer for turning off the R-LED (milliseconds). */
 
 /*--------------------------------------------------------------------------------*/
 /***************************** PERIPHERAL - DEFINITION ****************************/

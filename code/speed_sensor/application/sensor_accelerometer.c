@@ -35,8 +35,8 @@
 static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(ACC_TWI_INSTANCE_ID);
 
 /* Configuration */
-//#define SENSOR_DEBUG_OUTPUT				// test purpose: switch for log message
 //#define SENSOR_ALWAYS_REPORT_DEBUG		// test purpose: always report measurement even speed is zero
+//#define SENSOR_DEBUG_OUTPUT				// test purpose: switch for log message
 
 /* Data rate 10ms = 100Hz, the highest bicycle speed = 75 Km/h = 20.83 m/s,
    max RPM = 20.83 / 2m (circumference) = 10.41 Hz, but needs at least 4 samples for calculation = 41.64 Hz ~= 50Hz */
@@ -90,10 +90,10 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(ACC_TWI_INSTANCE_ID
 #define ACCEL_MOVE_COUNT_MAX 					18
 /* Threshold of square of accelerometer value */
 #define ACCEL_MOVE_SPEED_MID_G_VALUE 			2.25f	//accelerometer value >1.5 or <-1.5
-#define ACCEL_MOVE_SPEED_HIGH_G_VALUE 			16.0f	//accelerometer value >3.x or <-3.x
+#define ACCEL_MOVE_SPEED_HIGH_G_VALUE 			20.0f	//accelerometer value >3.x or <-3.x
 #endif
 /* If last_sample_counter smaller than it, should not check current sample_counter */
-#define ACCE_LAST_SAMPLE_COUNTER_MIN 			25
+#define ACCE_LAST_SAMPLE_COUNTER_MIN 			20
 /* If last_sample_counter larger than it, should not check current sample_counter */
 #define ACCE_LAST_SAMPLE_COUNTER_MAX 			150
 
@@ -472,15 +472,12 @@ static bool rw_lock_get(void)
 /**	@brief : speed_flag_set
 *	@param : value current_speed_sample turn into speed in meter per hour
 */
-static void speed_flag_set(uint32_t current_speed_sample)
+static void speed_flag_set(uint32_t current_speed)
 {
 	/* Threshold of square of accelerometer value */
-	#define ACCEL_MOVE_SPEED_HIGH_MH		45000 //45.00 Km/h
-	#define ACCEL_MOVE_SPEED_MEDHIGH_MH		30000 //30.00 Km/h
-	#define ACCEL_MOVE_SPEED_MED_MH			16000 //16.00 Km/h
-
-	/* sample number to speed(mh) = 3600(s) * 1000 (second to ms) * WHEEL_CIRCUMFERENCE_MM /1000 (mm to meter)/ current_speed_sample / ACCEL_DATARATE_MS */
-	uint32_t current_speed = 3600 * WHEEL_CIRCUMFERENCE_MM / current_speed_sample / ACCEL_DATARATE_MS;
+	#define ACCEL_MOVE_SPEED_HIGH_MH		60000 //60.00 Km/h
+	#define ACCEL_MOVE_SPEED_MEDHIGH_MH		40000 //40.00 Km/h
+	#define ACCEL_MOVE_SPEED_MED_MH			20000 //20.00 Km/h
 
 	// last_average_weighting is the average line help to check unexpected cases
 	if((current_speed > ACCEL_MOVE_SPEED_HIGH_MH) || ((last_average_weighting * last_average_weighting) > ACCEL_MOVE_SPEED_HIGH_G_VALUE))
@@ -591,6 +588,7 @@ static void accel_configuration(void)
 	if(who_n_i != LIS2DE12_WHO_AM_I_OUT)
 	{
 		NRF_LOG_ERROR(" Device ID not match!! : who_n_i: 0x%x", who_n_i);
+		nrf_drv_gpiote_out_clear(ACC_LEDR_PIN);
 		return;
 	}
 	else
@@ -621,6 +619,9 @@ static void accel_configuration(void)
     /* Set back to active and wake up */
 	accel_wake_up();
 	accel_display_reg();
+
+	/* Turn off the Red light (low enable) once finishing the communication with accelerometer */
+	nrf_drv_gpiote_out_set(ACC_LEDR_PIN);
 }
 
 #ifdef ACC_ST16G_ENABLE
@@ -925,17 +926,36 @@ static float lowPassExponential(float input, float average, float factor, float 
  */
 static float movingAvg(float input)
 {
-	#define ACCE_MOVING_AVG_WINDOWS 	5
-	static float 	arr_numbers[ACCE_MOVING_AVG_WINDOWS] ={0};
+	#define ACCE_MOVING_AVG_WINDOWS_HIGH 		4		// define the number of samples for HIGH speed state for moving average
+	#define ACCE_MOVING_AVG_WINDOWS_MIDHIGH 	8  		// define the number of samples for MIDHIGH speed state for moving average
+	#define ACCE_MOVING_AVG_WINDOWS_LOW 		15		// define the number of samples for LOW and MID speed state for moving average
+	#define ACCE_MOVING_AVG_WINDOWS_MAXIMUM 	ACCE_MOVING_AVG_WINDOWS_LOW
+
+	static float 	arr_numbers[ACCE_MOVING_AVG_WINDOWS_MAXIMUM] ={0};
 	static uint16_t last_pos = 0;
-	static float 	total_sum = 0;
+	static float 	total_sum_high 		= 0;
+	static float 	total_sum_midhigh 	= 0;
+	static float 	total_sum_low  		= 0;
 	/* Subtract the oldest number from the prev sum, add the new number */
-	total_sum = total_sum + input - arr_numbers[last_pos];
+	total_sum_low 		= total_sum_low + input - arr_numbers[last_pos];
+	total_sum_midhigh  	= total_sum_midhigh + input - arr_numbers[(last_pos + ACCE_MOVING_AVG_WINDOWS_MAXIMUM - ACCE_MOVING_AVG_WINDOWS_MIDHIGH) % ACCE_MOVING_AVG_WINDOWS_MAXIMUM];
+	total_sum_high  	= total_sum_high + input - arr_numbers[(last_pos + ACCE_MOVING_AVG_WINDOWS_MAXIMUM - ACCE_MOVING_AVG_WINDOWS_HIGH) % ACCE_MOVING_AVG_WINDOWS_MAXIMUM];
 	/* Assign the input to the position in the array */
 	arr_numbers[last_pos] = input;
-	last_pos = (last_pos + 1) % ACCE_MOVING_AVG_WINDOWS;
+	last_pos = (last_pos + 1) % ACCE_MOVING_AVG_WINDOWS_MAXIMUM;
 	/* return the average */
-	return (total_sum / ACCE_MOVING_AVG_WINDOWS);
+	if(acc_speed_high_flag == ACCE_SPEED_HIGH)
+	{
+		return (total_sum_high / ACCE_MOVING_AVG_WINDOWS_HIGH);
+	}
+	else if(acc_speed_high_flag == ACCE_SPEED_MIDHIGH)
+	{
+		return (total_sum_midhigh / ACCE_MOVING_AVG_WINDOWS_MIDHIGH);
+	}
+	else
+	{
+		return (total_sum_low / ACCE_MOVING_AVG_WINDOWS_LOW);
+	}
 }
 
 /**@brief Function speedAvg for get average speed.
@@ -1203,23 +1223,29 @@ static void acc_step_mag_update(float mag_update_value)
 	#define LIMITED_FACTOR_LOW_SPEED			0.38f
 
 	/* mid speed configuration: 16km ~ 30km */
-	#define LOW_PASS_FACTOR_MID_SPEED 			0.40f // ensure factor belongs to  [0,1]
+	#define LOW_PASS_FACTOR_MID_SPEED 			0.38f // ensure factor belongs to  [0,1]
 	#define AVERAGE_FACTOR_MID_SPEED			0.04f // ensure factor belongs to  [0,1]
-	#define LIMITED_FACTOR_MID_SPEED			0.45f
+	#define LIMITED_FACTOR_MID_SPEED			0.38f
 
 	/* mid-high speed configuration: 30 ~ 45 */
-	#define LOW_PASS_FACTOR_MIDHIGH_SPEED 		0.65f // ensure factor belongs to  [0,1]
+	#define LOW_PASS_FACTOR_MIDHIGH_SPEED 		0.42f // ensure factor belongs to  [0,1]
 	#define AVERAGE_FACTOR_MIDHIGH_SPEED		0.055f // ensure factor belongs to  [0,1]
-	#define LIMITED_FACTOR_MIDHIGH_SPEED		0.70f
+	#define LIMITED_FACTOR_MIDHIGH_SPEED		0.38f
 
 	/* high speed configuration: over 45 */
-	#define LOW_PASS_FACTOR_HIGH_SPEED 			0.86f // ensure factor belongs to  [0,1]
+	#define LOW_PASS_FACTOR_HIGH_SPEED 			0.73f // ensure factor belongs to  [0,1]
 	#define AVERAGE_FACTOR_HIGH_SPEED			0.08f // ensure factor belongs to  [0,1]
-	#define LIMITED_FACTOR_HIGH_SPEED			0.86f
+	#define LIMITED_FACTOR_HIGH_SPEED			0.70f
 
-	/* window only need to define high and low */
-	#define MAX_FILTER_WINDOW_HIGH_SPEED   		0.08f
-	#define MAX_FILTER_WINDOW_LOW_SPEED	   	    0.20f
+	/* window */
+	#define MAX_FILTER_WINDOW_HIGH_SPEED   		0.15f
+	#define MAX_FILTER_WINDOW_MIDHIGH_SPEED	   	    0.17f
+	#define MAX_FILTER_WINDOW_MID_SPEED	   	    0.21f
+	#define MAX_FILTER_WINDOW_LOW_SPEED	   	    0.26f
+
+	/* extra offset for minimum line */
+	#define MAX_FILTER_WINDOW_MIN_OFFSET   		0.03f
+
 #endif
 	#define MAX_LIMITED_FACTOR_HIGH_SPEED		2.0f
 	static float 	peakmax = 0, valleymax = 0;
@@ -1244,14 +1270,14 @@ static void acc_step_mag_update(float mag_update_value)
 	}
 	else if(acc_speed_high_flag == ACCE_SPEED_MIDHIGH)
 	{
-		filter_window 	= (MAX_FILTER_WINDOW_HIGH_SPEED + MAX_FILTER_WINDOW_LOW_SPEED )/2;
+		filter_window 	= MAX_FILTER_WINDOW_MIDHIGH_SPEED;
 		low_pass_factor = LOW_PASS_FACTOR_MIDHIGH_SPEED;
 		average_factor 	= AVERAGE_FACTOR_MIDHIGH_SPEED;
 		limited_factor  = LIMITED_FACTOR_MIDHIGH_SPEED;
 	}
 	else if(acc_speed_high_flag == ACCE_SPEED_MID)
 	{
-		filter_window 	= MAX_FILTER_WINDOW_LOW_SPEED;
+		filter_window 	= MAX_FILTER_WINDOW_MID_SPEED;
 		low_pass_factor = LOW_PASS_FACTOR_MID_SPEED;
 		average_factor 	= AVERAGE_FACTOR_MID_SPEED;
 		limited_factor  = LIMITED_FACTOR_MID_SPEED;
@@ -1270,9 +1296,9 @@ static void acc_step_mag_update(float mag_update_value)
 	mag_update_value = lowPassExponential(mag_update_value, last_mag_update_value, low_pass_factor, limited_factor);
 	last_mag_update_value = mag_update_value;
 
-	/* calculate average, max and min line */
+	/* calculate average, max and minimum line */
 	last_average_weighting = lowPassExponential(mag_update_value, last_average_weighting, average_factor, MAX_LIMITED_FACTOR_HIGH_SPEED);
-	step_temp_min = last_average_weighting - filter_window;
+	step_temp_min = last_average_weighting - filter_window - MAX_FILTER_WINDOW_MIN_OFFSET;
 	step_temp_max = last_average_weighting + filter_window;
 #ifdef SENSOR_DEBUG_OUTPUT
 	NRF_LOG_INFO("mag_update_value: %d, average_weighting: %d, min: %d, max: %d",(int16_t)(mag_update_value*1000),(int16_t)(last_average_weighting*1000),(int16_t)(step_temp_min*1000),(int16_t)(step_temp_max*1000));
@@ -1350,8 +1376,6 @@ static void acc_step_mag_update(float mag_update_value)
 						if ((sample_diff > ui32_last_sample_counter * 2) && mid_speed_flag_get())
 							ui32_total_step++; // makeup missed judgment
 						ui32_last_sample_counter = (sample_diff + ui32_last_sample_counter) / 2;
-						/* Set speed flag */
-						speed_flag_set(ui32_last_sample_counter);
 					}
 					else
 					{
@@ -1453,8 +1477,8 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 
         if(mid_speed_flag_get())
     	{
-			#define  ACCE_LOW_SPEED_SAMPLE_NUMBER  150
-        	speed_flag_set(ACCE_LOW_SPEED_SAMPLE_NUMBER); 	// rest speed flag
+			#define  ACCE_SPEED_LOW_KMH  0
+        	speed_flag_set(ACCE_SPEED_LOW_KMH); 	// rest speed flag
     	}
 #ifdef SENSOR_DEBUG_OUTPUT
 		NRF_LOG_INFO("accel_csc_measurement(): lap without change, skip report");
@@ -1482,6 +1506,9 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 	/* speed = current lap * circumference (mm) * 36000(s) / ((wheel event - last event time)/1024*1000) */
 	uint32_t speed_kmh = (float)(current_lap * DEF_ANGLE_360_DEGREE * ANGLE_SPEED_TO_METER_PER_HOUR *ACCEL_EVENT_TIME_FACTOR/ (event_time_inc));
 
+	/* Set speed flag */
+	speed_flag_set(speed_kmh);
+
 	/* recalculate even time driving from average speed */
 	uint32_t average_speed_kmh = speedAvg(speed_kmh);
 	/* new event time */
@@ -1499,12 +1526,16 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 		ui32_last_step_detect = ui32_step_sample_counter; // reset ui32_last_step_detect and ui32_step_detect_number to the latest sample
 		ui32_step_detect_number = ui32_last_step_detect;
 	}
+
 	p_measurement->is_wheel_rev_data_present = true;
-	p_measurement->is_crank_rev_data_present = false;
+	p_measurement->is_crank_rev_data_present = true;
 	p_measurement->cumulative_wheel_revs 	 = ui32_total_step;
 	p_measurement->last_wheel_event_time 	 = (uint16_t)ui16_wheel_event_time;
 
+
+
 #ifdef SENSOR_DEBUG_OUTPUT
+
 	p_measurement->is_crank_rev_data_present = true;
 	p_measurement->cumulative_crank_revs 	 = (uint16_t)(acc_speed_high_flag);
 	p_measurement->last_crank_event_time	 = (uint16_t)(average_speed_kmh/100);
