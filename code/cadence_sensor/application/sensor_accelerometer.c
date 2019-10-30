@@ -952,19 +952,28 @@ static float movingAvg(float input)
  */
 static float rpmAvg(float input)
 {
-	#define ACCE_RPM_AVG_WINDOWS 	2
+	#define ACCE_RPM_AVG_WINDOWS 	3
 	static float 	rpm_arr_numbers[ACCE_RPM_AVG_WINDOWS] ={0};
 	static uint16_t 	rpm_last_pos = 0;
 	static float 	rpm_total_sum = 0;
-	if(rpm_total_sum == 0)
-		return 	input;
+	static float	last_input_temp = 0;
+	float 			average = 0;
+
 	/* Subtract the oldest number from the prev sum, add the new number */
 	rpm_total_sum = rpm_total_sum + input - rpm_arr_numbers[rpm_last_pos];
 	/* Assign the input to the position in the array */
 	rpm_arr_numbers[rpm_last_pos] = input;
 	rpm_last_pos = (rpm_last_pos + 1) % ACCE_RPM_AVG_WINDOWS;
+
 	/* return the average */
-	return (rpm_total_sum / ACCE_RPM_AVG_WINDOWS);
+	if(rpm_total_sum == input) // if rpm_arr_numbers is empty, report fist input value immediately.
+		average = rpm_total_sum;
+	else if(rpm_total_sum == input + last_input_temp) // if rpm_arr_numbers only exists one data, report average of 2 data.
+		average = rpm_total_sum / 2;
+	else
+		average = (rpm_total_sum / ACCE_RPM_AVG_WINDOWS);
+	last_input_temp = input;
+	return average;
 }
 
 /**@brief Function for dump x,y,z g x 1000 value to ota.
