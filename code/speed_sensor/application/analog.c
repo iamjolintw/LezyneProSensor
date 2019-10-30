@@ -24,9 +24,9 @@
 
 
 #define SAMPLES_IN_BUFFER 			(1)
-#define SAMPLES_TRIGGER_TIMER		(1000)	// unit:ms
-#define SAMPLES_TRIGGER_FAST_TIMER	(5)		// unit:ms
-#define BAT_AVERAGE_COUNTER			(100)	// the average number of battery value
+#define SAMPLES_TRIGGER_TIMER		(3000)	// unit:ms
+#define SAMPLES_TRIGGER_FAST_TIMER	(50)	// unit:ms
+#define BAT_AVERAGE_COUNTER			(10)	// the average number of battery value
 
 static const nrf_drv_timer_t 	m_timer = NRF_DRV_TIMER_INSTANCE(1);
 static nrf_saadc_value_t     	m_buffer_pool[2][SAMPLES_IN_BUFFER];
@@ -34,6 +34,7 @@ static nrf_ppi_channel_t     	m_ppi_channel;
 static uint32_t 				batt_adc_sum = PERCENT_OVER_90;
 static uint32_t					old_batt_adc_sum = PERCENT_OVER_90;
 static bool						b_done_first_time = false;
+static uint8_t 					get_batt_count = 0;
 
 // functions
 static void bat_percent_lookup(uint32_t battery_level);
@@ -120,7 +121,7 @@ static void bat_percent_lookup(uint32_t battery_level)
         new_batt = 0;
     }
 
-    //NRF_LOG_INFO("battery = %d", new_batt);
+    //NRF_LOG_INFO("battery = %d, battery_level = %d", new_batt, battery_level);
     battery_level_update(new_batt);
 }
 
@@ -129,15 +130,12 @@ static void bat_percent_lookup(uint32_t battery_level)
  */
 void saadc_callback(nrf_drv_saadc_evt_t const * p_event)
 {
-	static uint8_t get_batt_count;
-
     if (p_event->type == NRF_DRV_SAADC_EVT_DONE)
     {
         ret_code_t 	err_code;
 
         err_code = nrf_drv_saadc_buffer_convert(p_event->data.done.p_buffer, SAMPLES_IN_BUFFER);
         APP_ERROR_CHECK(err_code);
-
         for (uint8_t i = 0; i < SAMPLES_IN_BUFFER; i++)
         {
         	// get data from buffer
@@ -259,6 +257,10 @@ void bat_sleep(void)
 
     /* uninitialize PPI */
     nrf_drv_ppi_uninit();
+
+    /* reset parameter */
+    b_done_first_time  = false;
+    get_batt_count = 0;
 }
 
 /**
