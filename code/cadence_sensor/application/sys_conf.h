@@ -22,7 +22,7 @@
 #define DEVICE_NAME_WITH_SERIAL_NO													/**< switch for enable/disable combination serial number with device name. */
 #define DEVICE_NAME                     "LezyneCAD"	                            	/**< Name of device. Will be included in the advertising data. */
 #define MANUFACTURER_NAME               "LEZYNE"                       				/**< Manufacturer. Will be passed to Device Information Service. */
-#define MANUFACTURER_VERSION			"05"
+#define MANUFACTURER_VERSION			"06"
 
 /* According to iOS "Accessory-Design-Guideines.pdf" Version:
  * 23.6 Connection Parameters - also refer to Bluetooth 4.0 specification.
