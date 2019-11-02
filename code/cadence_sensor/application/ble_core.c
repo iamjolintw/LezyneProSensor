@@ -604,7 +604,10 @@ static void services_init(void)
     // Initialize Device Information Service.
     memset(&dis_init, 0, sizeof(dis_init));
 
-    ble_srv_ascii_to_utf8(&dis_init.manufact_name_str, MANUFACTURER_NAME);
+    ble_srv_ascii_to_utf8(&dis_init.manufact_name_str,	MANUFACTURER_NAME);
+    ble_srv_ascii_to_utf8(&dis_init.model_num_str,		MODEL_NUM);
+    ble_srv_ascii_to_utf8(&dis_init.hw_rev_str,			HW_REV_NUM);
+    ble_srv_ascii_to_utf8(&dis_init.fw_rev_str,			FW_REV_NUM);
 
     dis_init.dis_char_rd_sec = SEC_OPEN;
 
@@ -1007,13 +1010,6 @@ static void advertising_init(void)
     memset(&init, 0, sizeof(init));
 
     // Set manufacturing data
-    ble_advdata_manuf_data_t			manuf_data;
-    uint8_t data[]						= MANUFACTURER_VERSION;
-    manuf_data.company_identifier		= 0xFFFF;
-    manuf_data.data.p_data				= data;
-    manuf_data.data.size				= 2;//sizeof(data);
-    init.advdata.p_manuf_specific_data	= &manuf_data;
-
     init.advdata.name_type               = BLE_ADVDATA_FULL_NAME;
     init.advdata.include_appearance      = false;
     init.advdata.flags                   = BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE;
