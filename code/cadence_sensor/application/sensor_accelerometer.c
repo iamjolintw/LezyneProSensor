@@ -81,11 +81,7 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(ACC_TWI_INSTANCE_ID
 #define ACCEL_MOVE_COUNT_MIN					6
 /* Non-moving counter: (10 - 6)*25*10ms = 1.0s time window */
 #define ACCEL_MOVE_COUNT_MAX 					10
-/* Switching the threshold by different RPM  */
-#define ACCEL_RPM_SPEED_HIGH					90 // RPM  (1.5 lap per second *60)
-#define ACCEL_RPM_SPEED_MED						60  // RPM  (1 lap per second *60)
-#define ACCEL_RPM_SPEED_LOW_MH					20  // RPM  (0.33 lap per second *60)
-
+/* Threshold of square of accelerometer value */
 #define ACCEL_MOVE_SPEED_MID_G_VALUE 			1.2f	//accelerometer value >1.09 or <-1.09
 #define ACCEL_MOVE_SPEED_HIGH_G_VALUE 			4.0f	//accelerometer value >2or <-2
 #else
@@ -1507,11 +1503,11 @@ void accel_calibration(void)
 ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 {
 	#define ACCEL_EVENT_TIME_FACTOR 			1.024f
-	#define ACCEL_CSC_STOP_REPORT_COUNT			3				//report csc measurement when lap is not changing for 3 seconds.
+	#define ACCEL_CSC_NOMOVE_REPORT_COUNT		3				//report csc measurement when lap is not changing for 3 seconds.
 
     static uint16_t ui16_last_total_time 		= 0, ui16_last_event_time = 0;		// total time is 1000-based, event time is 1024-based time
     static uint32_t ui32_last_step_sample 		= 0, ui32_last_step_detect = 0;
-    static uint16_t uin16_not_moving_counter 	= 0;						// overflow after 18 hours, no need to check
+    static uint16_t uin16_not_moving_counter 	= 0;								// overflow after 18 hours, no need to check
     uint16_t 		event_time_inc 				= 0, total_time_diff = 0, ui16_wheel_event_time = 0;	// event time is 1024-based time
     uint16_t 		current_sample 				= 0;
 
@@ -1553,7 +1549,7 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 		accel_csc_meas_timeout_handler2(cscs_measurement);
 #endif
     	uin16_not_moving_counter ++;
-    	if(uin16_not_moving_counter != ACCEL_CSC_STOP_REPORT_COUNT) //report csc measurement when lap is not changing for 3 seconds.
+    	if(uin16_not_moving_counter != ACCEL_CSC_NOMOVE_REPORT_COUNT) //report csc measurement when lap is not changing for 3 seconds.
     	{
     		return NRF_ERROR_INVALID_STATE;
     	}
@@ -1604,14 +1600,20 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 	p_measurement->cumulative_wheel_revs = (uint16_t)(current_sample);
 	p_measurement->last_wheel_event_time = (uint16_t)(average_rpm);
 #endif
-	acc_meas_report_flag 	= ((ui32_last_lap == ui32_total_step) && acc_meas_report_flag)? false : acc_meas_report_flag; // if lap is different, then next time shall update lap event again
+	acc_meas_report_flag = false;
 	/* last lap depend on angle mode or step mode */
 	ui32_last_lap = ui32_total_step;
 	ui32_last_step_sample = ui32_step_sample_counter;
 	ui16_last_event_time = ui16_wheel_event_time;
 	ui16_last_total_time = ui16_total_time;
-	if(uin16_not_moving_counter != ACCEL_CSC_STOP_REPORT_COUNT)
+	if(uin16_not_moving_counter != ACCEL_CSC_NOMOVE_REPORT_COUNT)
+	{
 		uin16_not_moving_counter = 0;
+	}
+	else
+	{
+		uin16_not_moving_counter++;
+	}
     return NRF_SUCCESS;
 }
 
