@@ -803,6 +803,9 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
 {
     ret_code_t err_code = NRF_SUCCESS;
 
+    // For readability.
+    ble_gap_evt_t const * p_gap_evt = &p_ble_evt->evt.gap_evt;
+
 	ble_conn_state_conn_handle_list_t conn_handles = ble_conn_state_periph_handles();
 
     switch (p_ble_evt->header.evt_id)
@@ -878,6 +881,21 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
         case BLE_GATTS_EVT_WRITE:
         	start_flag = true;
         	break;
+
+        case BLE_GAP_EVT_CONN_PARAM_UPDATE:
+        {
+        	NRF_LOG_INFO("Received BLE_GAP_EVT_CONN_PARAM_UPDATE");
+
+            // Accept parameters requested by peer.
+            err_code = sd_ble_gap_conn_param_update(p_gap_evt->conn_handle,
+                                        &p_gap_evt->params.conn_param_update_request.conn_params);
+            APP_ERROR_CHECK(err_code);
+
+            NRF_LOG_INFO("max_conn_interval: %d", p_gap_evt->params.conn_param_update_request.conn_params.max_conn_interval);
+            NRF_LOG_INFO("min_conn_interval: %d", p_gap_evt->params.conn_param_update_request.conn_params.min_conn_interval);
+            NRF_LOG_INFO("slave_latency: %d", p_gap_evt->params.conn_param_update_request.conn_params.slave_latency);
+            NRF_LOG_INFO("conn_sup_timeout: %d", p_gap_evt->params.conn_param_update_request.conn_params.conn_sup_timeout);
+        } break;
 
         default:
             // No implementation needed.

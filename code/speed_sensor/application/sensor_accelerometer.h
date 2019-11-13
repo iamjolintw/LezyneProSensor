@@ -111,7 +111,8 @@ typedef enum {
 /* defination of ratio of the circumference of a circle to its diameter*/
 #define PI 3.14159265
 
-#define ANGLE_SPEED_TO_METER_PER_HOUR ((WHEEL_CIRCUMFERENCE_MM * 3600)/(DEF_ANGLE_360_DEGREE))
+#define ANGLE_SPEED_TO_METER_PER_HOUR 	((WHEEL_CIRCUMFERENCE_MM * 3600)/(DEF_ANGLE_360_DEGREE))
+#define LAP_SPEED_TO_METER_PER_HOUR 	(WHEEL_CIRCUMFERENCE_MM * 3600)
 #define DEF_TOTAL_TIME_STAMP_MAXIMUM 	64000	//// total time is 1000-based. event time is 1024-based. total maximum value shall less that  64,000 (0x10000 / 0x800 * 2000)
 
 /* accelerometer sensitivity setting, note: the maximum of supported sensitivity of MMA8652 is 8G */

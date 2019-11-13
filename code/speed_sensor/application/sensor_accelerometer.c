@@ -56,9 +56,9 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(ACC_TWI_INSTANCE_ID
 #define ACCEL_LIS2DE12_LMP_DATARATE 			LIS2DE12_REG1_10HZ
 #endif
 
+#ifndef ACC_ST16G_ENABLE
 /* ASLP_RATE_160MS = 6.25 hz */
 #define ACCEL_SLEEPP_DATARATE 					ASLP_RATE_160MS
-#ifndef ACC_ST16G_ENABLE
 /* Threshold = 0x18; The step count is 0.063g/ count,  (1.05g/0.063g ~= 16 =0x10) */
 #define ACCEL_FF_MT_THS_VALUE 					(THS4_MASK)
 /* Set the debounce counter to eliminate false readings */
@@ -70,7 +70,7 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(ACC_TWI_INSTANCE_ID
 #define ACCEL_FF_MT_DEBOUNCE_COUNT 				0
 #endif
 /* Set compensate time */
-#define ACCEL_PROCESS_COMPENSATE_TIME 			1		// unit:ms
+#define ACCEL_PROCESS_COMPENSATE_TIME 			0		// unit:ms
 /* FIFO Event Sample Count Watermark, the value shall be less than 64 */
 #define DEF_WATERMARK_VAL 						25
 /* Minimum moving angle (degree per 0.25s (25*10ms)), degree 22 equal 1.8 Km/h (23x(1000/ACCEL_DATARATE_MS/DEF_WATERMARK_VAL)x2100*3600/360/1000) */
@@ -116,22 +116,20 @@ static int16_t 	last_angle_residue = DEF_INVALID_LAST_ANGLE;
 static uint16_t ui16_total_time = 0;
 /* Stationary counter: to indicate sensor is moving or not */
 static uint8_t 	ui8_movecnt = 0;
-/* Last lap indicator: range: 0 ~ 8 million km */
-static uint32_t ui32_last_lap = 0;
 /* Flag for switching the high speed algorithm or low speed algorithm */
 static t_accel_speed_flag 	acc_speed_high_flag = ACCE_SPEED_LOW;
 /* Flag for force report camdence */
 static bool 	acc_meas_report_flag = false;
 /* lap indicator: range: 0 ~ 8 million km */
 static uint32_t ui32_total_step = 0;
-/* State variable for zero crossing judgment */
-static step_detect_t  step_state = eSTEP_RESET;
 /* Sample number for zero crossing judgment: range: 0 ~ 11930 hours */
 static uint32_t ui32_step_sample_counter = 0;
 /* Sample number for detect a lap: range: 0 ~ 11930 hours */
 static uint32_t ui32_step_detect_number = 0;
 /* Last average value of zero crossing judgment */
 static float last_average_weighting = 0 ;
+/* The average of one shot speed */
+static float   	oneshot_speed_avg = 0;
 
 /* test purpose: FIFO dump */
 #ifdef ACCELEROMETER_DUMP_FIFO
@@ -270,7 +268,6 @@ void int2_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
 	}
 
 #else
-	NRF_LOG_INFO("int2_handler");
 #ifdef SENSOR_DEBUG_OUTPUT
 	uint8_t int_src = 0, fifo_src = 0, ui8_int_ref = 0;
 	accel_read_reg(LIS2DE12_INT_REFERENCE, 	&ui8_int_ref);
@@ -477,8 +474,8 @@ static bool rw_lock_get(void)
 static void speed_flag_set(uint32_t current_speed)
 {
 	/* Threshold of square of accelerometer value */
-	#define ACCEL_MOVE_SPEED_HIGH_MH		60000 //60.00 Km/h
-	#define ACCEL_MOVE_SPEED_MEDHIGH_MH		40000 //40.00 Km/h
+	#define ACCEL_MOVE_SPEED_HIGH_MH		60000 //58.00 Km/h
+	#define ACCEL_MOVE_SPEED_MEDHIGH_MH		38000 //38.00 Km/h
 	#define ACCEL_MOVE_SPEED_MED_MH			20000 //20.00 Km/h
 
 	// last_average_weighting is the average line help to check unexpected cases
@@ -927,18 +924,19 @@ static float lowPassExponential(float input, float average, float factor, float 
  */
 static float movingAvg(float input)
 {
-	#define ACCE_MOVING_AVG_WINDOWS_HIGH 		4		// define the number of samples for HIGH speed state for moving average
+	#define ACCE_MOVING_AVG_WINDOWS_HIGH 		3		// define the number of samples for HIGH speed state for moving average
 	#define ACCE_MOVING_AVG_WINDOWS_MIDHIGH 	8  		// define the number of samples for MIDHIGH speed state for moving average
-	#define ACCE_MOVING_AVG_WINDOWS_LOW 		15		// define the number of samples for LOW and MID speed state for moving average
+	#define ACCE_MOVING_AVG_WINDOWS_MID 		13		// define the number of samples for LOW and MID speed state for moving average
+	#define ACCE_MOVING_AVG_WINDOWS_LOW 		18		// define the number of samples for LOW and MID speed state for moving average
 	#define ACCE_MOVING_AVG_WINDOWS_MAXIMUM 	ACCE_MOVING_AVG_WINDOWS_LOW
 
 	static float 	arr_numbers[ACCE_MOVING_AVG_WINDOWS_MAXIMUM] ={0};
 	static uint16_t last_pos = 0;
-	static float 	total_sum_high 		= 0;
-	static float 	total_sum_midhigh 	= 0;
-	static float 	total_sum_low  		= 0;
+	static float 	total_sum_high 		= 0, total_sum_midhigh 	= 0, total_sum_mid	= 0, total_sum_low	= 0;
+
 	/* Subtract the oldest number from the prev sum, add the new number */
 	total_sum_low 		= total_sum_low + input - arr_numbers[last_pos];
+	total_sum_mid 		= total_sum_mid + input - arr_numbers[(last_pos + ACCE_MOVING_AVG_WINDOWS_MAXIMUM - ACCE_MOVING_AVG_WINDOWS_MID) % ACCE_MOVING_AVG_WINDOWS_MAXIMUM];
 	total_sum_midhigh  	= total_sum_midhigh + input - arr_numbers[(last_pos + ACCE_MOVING_AVG_WINDOWS_MAXIMUM - ACCE_MOVING_AVG_WINDOWS_MIDHIGH) % ACCE_MOVING_AVG_WINDOWS_MAXIMUM];
 	total_sum_high  	= total_sum_high + input - arr_numbers[(last_pos + ACCE_MOVING_AVG_WINDOWS_MAXIMUM - ACCE_MOVING_AVG_WINDOWS_HIGH) % ACCE_MOVING_AVG_WINDOWS_MAXIMUM];
 	/* Assign the input to the position in the array */
@@ -946,17 +944,13 @@ static float movingAvg(float input)
 	last_pos = (last_pos + 1) % ACCE_MOVING_AVG_WINDOWS_MAXIMUM;
 	/* return the average */
 	if(acc_speed_high_flag == ACCE_SPEED_HIGH)
-	{
-		return (total_sum_high / ACCE_MOVING_AVG_WINDOWS_HIGH);
-	}
+		return (float)(total_sum_high / ACCE_MOVING_AVG_WINDOWS_HIGH);
 	else if(acc_speed_high_flag == ACCE_SPEED_MIDHIGH)
-	{
-		return (total_sum_midhigh / ACCE_MOVING_AVG_WINDOWS_MIDHIGH);
-	}
+		return (float)(total_sum_midhigh / ACCE_MOVING_AVG_WINDOWS_MIDHIGH);
+	else if(acc_speed_high_flag == ACCE_SPEED_MIDHIGH)
+		return (float)(total_sum_mid / ACCE_MOVING_AVG_WINDOWS_MID);
 	else
-	{
-		return (total_sum_low / ACCE_MOVING_AVG_WINDOWS_LOW);
-	}
+		return (float)(total_sum_low / ACCE_MOVING_AVG_WINDOWS_LOW);
 }
 
 /**@brief Function speedAvg for get average speed.
@@ -1065,7 +1059,7 @@ void acc_read_fifodata(void)
 		/* LezyneSPD use y axis to check zero-crossing condition */
 		mag_accel_sample[i] = ay;
 #else
-		accel_xyz[0] = ((int16_t)((uint16_t)((uint16_t)accel_buff[(i*6)+1]<< 8) | (uint16_t)accel_buff[(i*6)]));
+		//accel_xyz[0] = ((int16_t)((uint16_t)((uint16_t)accel_buff[(i*6)+1]<< 8) | (uint16_t)accel_buff[(i*6)]));
 		accel_xyz[1] = ((int16_t)((uint16_t)((uint16_t)accel_buff[(i*6)+3]<< 8) | (uint16_t)accel_buff[(i*6)+2]));
 		accel_xyz[2] = ((int16_t)((uint16_t)((uint16_t)accel_buff[(i*6)+5]<< 8) | (uint16_t)accel_buff[(i*6)+4]));
 
@@ -1088,7 +1082,6 @@ void acc_read_fifodata(void)
 static void acc_step_update_angle(uint16_t *angle_array, float *mag_array)
 {
 	uint8_t 	i = 0;
-	uint16_t 	last_angle = angle_array[DEF_WATERMARK_VAL-1];
 	int16_t 	current_angle = 0, temp_angle_diff = 0;
 
 	/* ticks time */
@@ -1121,16 +1114,16 @@ static void acc_step_update_angle(uint16_t *angle_array, float *mag_array)
 		{
 			temp_angle_diff = temp_angle_diff + DEF_ANGLE_360_DEGREE;
 		}
-		else if((temp_angle_diff > DEF_MAX_ANGLE_WINDOW) || (temp_angle_diff < (DEF_MAX_ANGLE_WINDOW * -1)))
-		{
-			NRF_LOG_INFO("Warning!!! i:(%d) the difference (%d) > 75, [%d]-[%d] ", i, temp_angle_diff, angle_array[i], (i==0)?last_angle_residue:angle_array[i-1]);
-		}
+		//else if((temp_angle_diff > DEF_MAX_ANGLE_WINDOW) || (temp_angle_diff < (DEF_MAX_ANGLE_WINDOW * -1)))
+		//{
+		//	NRF_LOG_INFO("Warning!!! i:(%d) the difference (%d) > 75, [%d]-[%d] ", i, temp_angle_diff, angle_array[i], (i==0)?last_angle_residue:angle_array[i-1]);
+		//}
 
 		current_angle += temp_angle_diff;
 	}
 
 	current_angle = abs(current_angle);
-	last_angle_residue = last_angle;		// update last_angle_residue for current last_angle
+	last_angle_residue = angle_array[DEF_WATERMARK_VAL-1];		// update last_angle_residue for current last_angle
 
 	/* event time is 1024-based. maximum value shall less that  64,000 (0x10000 / 0x800 * 2000) */
 	ui16_total_time = (ui16_total_time + diff_time) % (DEF_TOTAL_TIME_STAMP_MAXIMUM);
@@ -1185,7 +1178,6 @@ void acc_step_reset_angle(void)
 {
     last_angle_residue = DEF_INVALID_LAST_ANGLE;
     ui16_total_time = 0;
-    step_state = eSTEP_RESET;
     ui32_step_sample_counter = 0;
 }
 
@@ -1220,19 +1212,19 @@ static void acc_step_mag_update(float mag_update_value)
 	#define MAX_FILTER_WINDOW_LOW_SPEED	   		0.15f
 #else
 	/* low speed configuration: 0~16km */
-	#define LOW_PASS_FACTOR_LOW_SPEED 			0.35f // ensure factor belongs to  [0,1]
-	#define AVERAGE_FACTOR_LOW_SPEED			0.02f // ensure factor belongs to  [0,1]
+	#define LOW_PASS_FACTOR_LOW_SPEED 			0.25f // ensure factor belongs to  [0,1]
+	#define AVERAGE_FACTOR_LOW_SPEED			0.018f // ensure factor belongs to  [0,1]
 	#define LIMITED_FACTOR_LOW_SPEED			0.38f
 
 	/* mid speed configuration: 16km ~ 30km */
-	#define LOW_PASS_FACTOR_MID_SPEED 			0.38f // ensure factor belongs to  [0,1]
-	#define AVERAGE_FACTOR_MID_SPEED			0.04f // ensure factor belongs to  [0,1]
-	#define LIMITED_FACTOR_MID_SPEED			0.38f
+	#define LOW_PASS_FACTOR_MID_SPEED 			0.40f // ensure factor belongs to  [0,1]
+	#define AVERAGE_FACTOR_MID_SPEED			0.042f // ensure factor belongs to  [0,1]
+	#define LIMITED_FACTOR_MID_SPEED			0.45f
 
 	/* mid-high speed configuration: 30 ~ 45 */
-	#define LOW_PASS_FACTOR_MIDHIGH_SPEED 		0.42f // ensure factor belongs to  [0,1]
-	#define AVERAGE_FACTOR_MIDHIGH_SPEED		0.05f // ensure factor belongs to  [0,1]
-	#define LIMITED_FACTOR_MIDHIGH_SPEED		0.38f
+	#define LOW_PASS_FACTOR_MIDHIGH_SPEED 		0.48f // ensure factor belongs to  [0,1]
+	#define AVERAGE_FACTOR_MIDHIGH_SPEED		0.052f // ensure factor belongs to  [0,1]
+	#define LIMITED_FACTOR_MIDHIGH_SPEED		0.52f
 
 	/* high speed configuration: over 45 */
 	#define LOW_PASS_FACTOR_HIGH_SPEED 			0.8f // ensure factor belongs to  [0,1]
@@ -1240,21 +1232,33 @@ static void acc_step_mag_update(float mag_update_value)
 	#define LIMITED_FACTOR_HIGH_SPEED			0.8f
 
 	/* window */
-	#define MAX_FILTER_WINDOW_HIGH_SPEED   		0.15f
-	#define MAX_FILTER_WINDOW_MIDHIGH_SPEED	   	0.17f
-	#define MAX_FILTER_WINDOW_MID_SPEED	   	    0.20f
-	#define MAX_FILTER_WINDOW_LOW_SPEED	   	    0.26f
+	#define MAX_FILTER_WINDOW_HIGH_SPEED   		0.13f
+	#define MAX_FILTER_WINDOW_MIDHIGH_SPEED	   	0.22f
+	#define MAX_FILTER_WINDOW_MID_SPEED	   	    0.27f
+	#define MAX_FILTER_WINDOW_LOW_SPEED	   	    0.20f
 
 	/* extra offset for minimum line */
-	#define MAX_FILTER_WINDOW_MIN_OFFSET   		0.05f
-
+	#define MAX_FILTER_WINDOW_MIN_OFFSET   		0.10f
 #endif
+	/* allows minimum samples in different speed */
+	#define ACCE_SPEED_HIGH_DIFF_MINI  			12		// 12-samples is around 120 km/h
+	#define ACCE_SPEED_MIDHIGH_DIFF_MINI 		21 		// 21-samples is around 72 km/h
+	#define ACCE_SPEED_MID_DIFF_MINI 			27		// 27-samples is around 60 km/h
+	#define ACCE_SPEED_LOW_DIFF_MINI 			37  	// 37-samples is around 40 km/h
+	#define ACCE_RISING_EDGE_ALLOWED_DIFF 		16.6	// When speed goes up, the maximum speed difference between two consecutive laps.
+	#define ACCE_RISING_EDGE_ALLOWED_DIFF2 		11		// When speed goes up, 2nd check parameter
+	#define ACCE_FALLING_EDGE_ALLOWED_DIFF 		13.2 	// when speed goes down, the maximum speed difference between two consecutive laps.
+	#define ACCE_FALLING_EDGE_ALLOWED_DIFF2 	8 		// when speed goes down, 2nd check parameter
+
 	#define MAX_LIMITED_FACTOR_HIGH_SPEED		2.0f
 	#define MAX_SAMPLE_NUMBER_RESET				800			// 4 seconds
+
+	static step_detect_t  step_state = eSTEP_RESET; 		// State variable for zero crossing judgment
 	static float 	peakmax = 0, valleymax = 0;
 	static float 	last_mag_update_value = 0;
+	static bool 	short_samples_allowed_flag = false, two_laps_flag = false;
 	float 			step_temp_min = 0, step_temp_max = 0;
-	float 			filter_window = 0, low_pass_factor = 0, average_factor = 0, limited_factor = 0;
+	float 			filter_window = 0, low_pass_factor = 0, average_factor = 0, limited_factor = 0, limited_samples = 0;
 
 	if(ui32_step_sample_counter == 0) // initiate default value
 	{
@@ -1270,6 +1274,7 @@ static void acc_step_mag_update(float mag_update_value)
 		low_pass_factor = LOW_PASS_FACTOR_HIGH_SPEED;
 		average_factor 	= AVERAGE_FACTOR_HIGH_SPEED;
 		limited_factor  = LIMITED_FACTOR_HIGH_SPEED;
+		limited_samples	= ACCE_SPEED_HIGH_DIFF_MINI;
 	}
 	else if(acc_speed_high_flag == ACCE_SPEED_MIDHIGH)
 	{
@@ -1277,6 +1282,7 @@ static void acc_step_mag_update(float mag_update_value)
 		low_pass_factor = LOW_PASS_FACTOR_MIDHIGH_SPEED;
 		average_factor 	= AVERAGE_FACTOR_MIDHIGH_SPEED;
 		limited_factor  = LIMITED_FACTOR_MIDHIGH_SPEED;
+		limited_samples	= ACCE_SPEED_MIDHIGH_DIFF_MINI;
 	}
 	else if(acc_speed_high_flag == ACCE_SPEED_MID)
 	{
@@ -1284,6 +1290,7 @@ static void acc_step_mag_update(float mag_update_value)
 		low_pass_factor = LOW_PASS_FACTOR_MID_SPEED;
 		average_factor 	= AVERAGE_FACTOR_MID_SPEED;
 		limited_factor  = LIMITED_FACTOR_MID_SPEED;
+		limited_samples	= ACCE_SPEED_MID_DIFF_MINI;
 	}
 	else
 	{
@@ -1291,6 +1298,7 @@ static void acc_step_mag_update(float mag_update_value)
 		low_pass_factor = LOW_PASS_FACTOR_LOW_SPEED;
 		average_factor 	= AVERAGE_FACTOR_LOW_SPEED;
 		limited_factor  = LIMITED_FACTOR_LOW_SPEED;
+		limited_samples	= ACCE_SPEED_LOW_DIFF_MINI;
 	}
 
 	/* moving average */
@@ -1368,10 +1376,16 @@ static void acc_step_mag_update(float mag_update_value)
 			{
 				if(ui8_movecnt > ACCEL_MOVE_COUNT_MIN) // check is moving or not
 				{
-					static uint32_t ui32_last_sample_counter  = ACCE_LAST_SAMPLE_COUNTER_MAX;
 					uint32_t sample_diff = ui32_step_sample_counter - ui32_step_detect_number;
+					float oneshot_speed_kmh = LAP_SPEED_TO_METER_PER_HOUR / ACCEL_DATARATE_MS / 1000 / sample_diff;
 					/* current sample number should bigger than last_sample_counter/2 + 1, but not in high speed stage */
-					if((sample_diff > (ui32_last_sample_counter * 0.5) + 1) || (ui32_last_sample_counter < ACCE_LAST_SAMPLE_COUNTER_MIN) || (ui32_last_sample_counter > ACCE_LAST_SAMPLE_COUNTER_MAX))
+					if((sample_diff < limited_samples ) ||  // lower samples means higher speed
+						(!short_samples_allowed_flag && (oneshot_speed_kmh > (oneshot_speed_avg + ACCE_RISING_EDGE_ALLOWED_DIFF)) && (acc_speed_high_flag != ACCE_SPEED_HIGH)))
+					{
+						valleymax = mag_update_value;
+						step_state = eSTEP_PEAK_DETECT;
+					}
+					else
 					{
 						/* Update total lap and event happened sample number */
 						if(sample_diff < MAX_SAMPLE_NUMBER_RESET)	// only update lap when sample_diff small than 400 (4s)
@@ -1382,24 +1396,39 @@ static void acc_step_mag_update(float mag_update_value)
 						{
 							acc_meas_report_flag = true;
 						}
-						ui32_step_detect_number = ui32_step_sample_counter;
 
-						ui32_last_sample_counter = (sample_diff + ui32_last_sample_counter) / 2;
+						if (!two_laps_flag && (oneshot_speed_kmh < (oneshot_speed_avg - ACCE_FALLING_EDGE_ALLOWED_DIFF )) && (oneshot_speed_kmh *2) < (oneshot_speed_avg + ACCE_RISING_EDGE_ALLOWED_DIFF))
+						{
+							ui32_total_step++;
+							oneshot_speed_kmh *= 2;
+							two_laps_flag = true;
+							short_samples_allowed_flag = false;
+						}
+						else if ((oneshot_speed_kmh < (oneshot_speed_avg - ACCE_FALLING_EDGE_ALLOWED_DIFF2 )))
+						{
+							short_samples_allowed_flag = true;
+							two_laps_flag = false;
+						}
+						else
+						{
+							two_laps_flag = false;
+							short_samples_allowed_flag = false;
+						}
+
+						ui32_step_detect_number = ui32_step_sample_counter;
+						//oneshot_speed_avg = lowPassExponential(oneshot_speed_kmh, oneshot_speed_avg, 0.18, ACCE_RISING_EDGE_ALLOWED_DIFF);
+
+						valleymax = step_temp_min;
+						peakmax = step_temp_max;
+						step_state = eSTEP_START_PEAK;
 					}
-					else
-					{
-						/* Always update ui32_last_sample_counter in case of losing it forever */
-						ui32_last_sample_counter = ((sample_diff + (ui32_last_sample_counter * 2)) / 3);
-					}
-					/* do not check sample_diff if speed is too slow or too fast */
-					if(ui32_last_sample_counter > ACCE_LAST_SAMPLE_COUNTER_MAX)
-						ui32_last_sample_counter = ACCE_LAST_SAMPLE_COUNTER_MAX + 1;
-					else if(ui32_last_sample_counter < ACCE_LAST_SAMPLE_COUNTER_MIN)
-						ui32_last_sample_counter = ACCE_LAST_SAMPLE_COUNTER_MIN - 1;
 				}
-				valleymax = step_temp_min;
-				peakmax = step_temp_max;
-				step_state = eSTEP_START_PEAK;
+				else
+				{
+					valleymax = step_temp_min;
+					peakmax = step_temp_max;
+					step_state = eSTEP_START_PEAK;
+				}
 			}
 			else if(mag_update_value < valleymax)
 			{
@@ -1459,11 +1488,12 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 	#define ACCEL_EVENT_TIME_FACTOR 			1.024f
 	#define ACCEL_CSC_NOMOVE_REPORT_COUNT		3 	//report csc measurement when lap is not changing for 3 seconds. minimum speed: 2.54km/h
 
-    static uint16_t ui16_last_total_time = 0, ui16_last_event_time = 0;		// total time is 1000-based, event time is 1024-based time
-    static uint32_t ui32_last_step_sample = 0, ui32_last_step_detect = 0;
-	static uint16_t uin16_not_moving_counter 	= 0;	
-    uint16_t 		event_time_inc = 0, total_time_diff = 0, ui16_wheel_event_time = 0;	// event time is 1024-based time
-    uint16_t 		current_sample = 0;
+	static uint32_t ui32_last_lap = 0;							// Last lap indicator: range: 0 ~ 8 million km
+    static uint16_t ui16_last_total_time 		= 0, ui16_last_event_time = 0;		// total time is 1000-based, event time is 1024-based time
+    static uint32_t ui32_last_step_sample 		= 0, ui32_last_step_detect = 0;
+    static uint16_t uin16_not_moving_counter 	= 0;								// overflow after 18 hours, no need to check
+    uint16_t 		event_time_inc 				= 0, total_time_diff = 0, ui16_wheel_event_time = 0;	// event time is 1024-based time
+    uint16_t 		current_sample 				= 0;
 
     if(rw_lock_get())	// if rw_lock is ture means the critical global variable is updating.
     {
@@ -1482,7 +1512,6 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 #endif
     	return NRF_ERROR_INVALID_STATE;
     }
-#ifndef SENSOR_ALWAYS_REPORT_DEBUG
     else if((ui32_last_lap == ui32_total_step) && !acc_meas_report_flag)
     {
 
@@ -1504,6 +1533,7 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 		accel_csc_meas_timeout_handler2(cscs_measurement);
 #endif
     	uin16_not_moving_counter ++;
+#ifndef SENSOR_ALWAYS_REPORT_DEBUG		
     	/*
     	 * should report speed= 0 n-times (ACCE_SPEED_AVG_WINDOWS) to fill up average buffer.
     	 * */
@@ -1512,8 +1542,9 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
     		return NRF_ERROR_INVALID_STATE;
     	}
     	//else {}  // should report speed= 0 n-times (ACCE_SPEED_AVG_WINDOWS) to fill up average buffer.
-    }
 #endif
+    }
+
 	total_time_diff = (ui16_total_time>ui16_last_total_time)? ui16_total_time - ui16_last_total_time : ui16_total_time + DEF_TOTAL_TIME_STAMP_MAXIMUM - ui16_last_total_time;
 
 	/* step based time event calculation*/
@@ -1525,6 +1556,7 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 	/* speed = current lap * circumference (mm) * 36000(s) / ((wheel event - last event time)/1024*1000) */
 	uint32_t speed_kmh = (float)(current_lap * DEF_ANGLE_360_DEGREE * ANGLE_SPEED_TO_METER_PER_HOUR *ACCEL_EVENT_TIME_FACTOR/ (event_time_inc));
 
+	oneshot_speed_avg = speed_kmh/1000;
 	/* Set speed flag */
 	speed_flag_set(speed_kmh);
 
@@ -1539,20 +1571,28 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 	{
 		ui16_wheel_event_time = ui16_last_event_time + event_time_inc;
 		ui32_last_step_detect = ui32_step_detect_number;
+		uin16_not_moving_counter = 0;
 	}
 	else
 	{
-		ui16_wheel_event_time = ui16_last_event_time + (total_time_diff * ACCEL_EVENT_TIME_FACTOR);
-		ui32_last_step_detect = ui32_step_detect_number; // reset ui32_last_step_detect and ui32_step_detect_number to the latest sample
+#ifdef SENSOR_ALWAYS_REPORT_DEBUG
+		if(uin16_not_moving_counter < ACCEL_CSC_NOMOVE_REPORT_COUNT)
+		{
+			ui16_wheel_event_time = ui16_last_event_time;
+			//ui32_last_step_detect = ui32_step_detect_number;
+		}
+		else
+#endif
+		{
+			ui16_wheel_event_time = ui16_last_event_time + (total_time_diff * ACCEL_EVENT_TIME_FACTOR);
+			ui32_last_step_detect = ui32_step_detect_number; // reset ui32_last_step_detect and ui32_step_detect_number to the latest sample
+		}
 	}
 
 	p_measurement->is_wheel_rev_data_present = true;
-	p_measurement->is_crank_rev_data_present = true;
+	//p_measurement->is_crank_rev_data_present = false;
 	p_measurement->cumulative_wheel_revs 	 = ui32_total_step;
 	p_measurement->last_wheel_event_time 	 = (uint16_t)ui16_wheel_event_time;
-
-
-
 #ifdef SENSOR_DEBUG_OUTPUT
 
 	p_measurement->is_crank_rev_data_present = true;
@@ -1563,15 +1603,6 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 	NRF_LOG_INFO("sample_counter: %d, step_detect_num: %d, event_time_inc: %d", ui32_step_sample_counter, ui32_step_detect_number, event_time_inc );
 #endif
 	acc_meas_report_flag = false;
-	if((uin16_not_moving_counter <= ACCEL_CSC_NOMOVE_REPORT_COUNT) || (uin16_not_moving_counter > (ACCEL_CSC_NOMOVE_REPORT_COUNT + ACCE_SPEED_AVG_WINDOWS))) // if lap is unchanged, do not report csc measurement.
-	{
-		uin16_not_moving_counter = 0;
-	}
-	else
-	{
-		if(ui32_last_lap != ui32_total_step)
-			uin16_not_moving_counter = 0;
-	}
 	/* last lap depend on angle mode or step mode */
 	ui32_last_lap 			= ui32_total_step;
 	ui32_last_step_sample 	= ui32_step_sample_counter;
