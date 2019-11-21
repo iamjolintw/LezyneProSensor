@@ -80,6 +80,8 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(ACC_TWI_INSTANCE_ID
 #define ACCEL_MOVE_ANGLE_MIN					20
 /* Maximum moving RPM */
 #define ACCEL_MOVE_RPM_MAX						214
+#define	ACCEL_MOVE_RPM_MIN						15
+#define	ACCEL_WEIGHT_RPM_DIFF					15
 #ifndef ACC_ST16G_ENABLE
 /* Moving counter: 6 movements in 25*10ms = 1.5s time window */
 #define ACCEL_MOVE_COUNT_MIN					6
@@ -1547,7 +1549,7 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
     {
 		uin16_not_moving_counter ++;
     }
-    else if(oneshot_rpm_avg <= 15)		// If oneshot average is lower than 15 RPM, considering it as non-moving.
+    else if(oneshot_rpm_avg <= ACCEL_MOVE_RPM_MIN)		// If oneshot average is lower than 15 RPM, considering it as non-moving.
     {
     	oneshot_rpm_avg = 0;
     	uin16_not_moving_counter ++;
@@ -1572,9 +1574,8 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 		average_rpm = 0;
 	else if(average_rpm > ACCEL_MOVE_RPM_MAX)
 		average_rpm = ACCEL_MOVE_RPM_MAX;
-	else if(abs(oneshot_rpm_avg - average_rpm) > 15)		// if RPM is falling/rising more than 15 RPM, weight twice oneshot_rpm_avg
+	else if(abs(oneshot_rpm_avg - average_rpm) > ACCEL_WEIGHT_RPM_DIFF)		// if RPM is falling/rising more than 15 RPM, weight twice oneshot_rpm_avg
 		average_rpm = rpmAvg(oneshot_rpm_avg);
-
 
     /* set new speed flag */
     speed_flag_set((uint16_t)average_rpm);
@@ -1607,7 +1608,7 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 	}
 	else
 	{
-		if(average_rpm > 0)
+		if(average_rpm > ACCEL_MOVE_RPM_MIN)
 		{
 			float ms_per_lap = 0;
 			uint16_t current_lap = 0;
@@ -1618,12 +1619,12 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 			}
 			else
 			{
-				/* rpm = 60 * 1000 / laps */
-				 lap = (60 * 1000) / average_rpm * total_time_diff
+				/* rpm = 60 * 1000 * laps_per_ms */
 				current_lap =  total_time_diff / ms_per_lap;
 			}
 			ui16_last_report_lap += current_lap;
-			ui16_wheel_event_time = ui16_last_event_time + (uint16_t)((float)(current_lap * 60 * ACCEL_EVENT_TIME_FACTOR * 1000 / (average_rpm)));
+			/* (lap / rpm)  = duration (min) */
+			ui16_wheel_event_time = ui16_last_event_time + (uint16_t)(((float)current_lap / average_rpm) * 60 * 1000 * ACCEL_EVENT_TIME_FACTOR);
 			ui16_last_total_time = ui16_total_time;
 		}
 		else 	//average_rpm == 0, update ui16_wheel_event_time without changing the laps
