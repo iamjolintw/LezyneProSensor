@@ -20,11 +20,11 @@
 /********************************* BLE - DEFINITION *******************************/
 /*--------------------------------------------------------------------------------*/
 #define DEVICE_NAME_WITH_SERIAL_NO													/**< switch for enable/disable combination serial number with device name. */
-#define DEVICE_NAME                     "LezyneCAD"	                            	/**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME                     "LezyneProCAD"	                           	/**< Name of device. Will be included in the advertising data. */
 #define MANUFACTURER_NAME               "LEZYNE"                       				/**< Manufacturer. Will be passed to Device Information Service. */
 #define MODEL_NUM              			"ProCAD-1"									/**< Model Name. Will be passed to Device Information Service. */
 #define HW_REV_NUM						"0.1"										/**< Hardware Version. Will be passed to Device Information Service. */
-#define FW_REV_NUM						"0.09.2"										/**< Firmware Version. Will be passed to Device Information Service. */
+#define FW_REV_NUM						"0.09.3"									/**< Firmware Version. Will be passed to Device Information Service. */
 
 /* According to iOS "Accessory-Design-Guideines.pdf" Version:
  * 23.6 Connection Parameters - also refer to Bluetooth 4.0 specification.

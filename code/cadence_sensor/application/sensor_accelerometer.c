@@ -1585,7 +1585,7 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 	if (acc_meas_report_flag) // the beginning of the first lap, report it immediately
 	{
 		acc_meas_report_flag = false;
-		ui16_last_report_lap++;
+		//ui16_last_report_lap++;
 		ui16_wheel_event_time = ui16_last_event_time + (total_time_diff * ACCEL_EVENT_TIME_FACTOR);
 		ui16_last_total_time = ui16_total_time;
 		//uin16_not_moving_counter = 0;
