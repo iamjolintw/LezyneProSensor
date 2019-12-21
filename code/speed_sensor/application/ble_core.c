@@ -882,19 +882,19 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
         	start_flag = true;
         	break;
 
-        case BLE_GAP_EVT_CONN_PARAM_UPDATE:
+        case BLE_GAP_EVT_CONN_PARAM_UPDATE_REQUEST:
         {
-        	NRF_LOG_INFO("Received BLE_GAP_EVT_CONN_PARAM_UPDATE");
+        	//NRF_LOG_INFO("Received BLE_GAP_EVT_CONN_PARAM_UPDATE");
 
             // Accept parameters requested by peer.
             err_code = sd_ble_gap_conn_param_update(p_gap_evt->conn_handle,
                                         &p_gap_evt->params.conn_param_update_request.conn_params);
             APP_ERROR_CHECK(err_code);
 
-            NRF_LOG_INFO("max_conn_interval: %d", p_gap_evt->params.conn_param_update_request.conn_params.max_conn_interval);
-            NRF_LOG_INFO("min_conn_interval: %d", p_gap_evt->params.conn_param_update_request.conn_params.min_conn_interval);
-            NRF_LOG_INFO("slave_latency: %d", p_gap_evt->params.conn_param_update_request.conn_params.slave_latency);
-            NRF_LOG_INFO("conn_sup_timeout: %d", p_gap_evt->params.conn_param_update_request.conn_params.conn_sup_timeout);
+            NRF_LOG_INFO("update max/min connect_interveal: %d/%d", p_gap_evt->params.conn_param_update_request.conn_params.max_conn_interval,p_gap_evt->params.conn_param_update_request.conn_params.min_conn_interval);
+            //NRF_LOG_INFO("min_conn_interval: %d", p_gap_evt->params.conn_param_update_request.conn_params.min_conn_interval);
+            //NRF_LOG_INFO("slave_latency: %d", p_gap_evt->params.conn_param_update_request.conn_params.slave_latency);
+            //NRF_LOG_INFO("conn_sup_timeout: %d", p_gap_evt->params.conn_param_update_request.conn_params.conn_sup_timeout);
         } break;
 
         default:

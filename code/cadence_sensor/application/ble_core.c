@@ -881,7 +881,7 @@ static void ble_evt_handler(ble_evt_t const * p_ble_evt, void * p_context)
         	start_flag = true;
         	break;
 
-        case BLE_GAP_EVT_CONN_PARAM_UPDATE:
+        case BLE_GAP_EVT_CONN_PARAM_UPDATE_REQUEST:
         {
         	NRF_LOG_INFO("Received BLE_GAP_EVT_CONN_PARAM_UPDATE");
 

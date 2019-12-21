@@ -7,6 +7,7 @@
  *  				 2019/07/04  2nd version Angle algorithm, simplified, with forward and backwards judgment
  *  				 2019/07/31  3nd version zero crossing algorithm with two different average threshold for high and low speed
  *					 2019/09/25  4nd version zero crossing algorithm with moving average and limited range in low pass filter
+ *					 2019/12/02  add selftest function
  *
  */
 
@@ -84,13 +85,14 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(ACC_TWI_INSTANCE_ID
 #define ACCEL_MOVE_SPEED_MID_G_VALUE 			1.2f	//accelerometer value >1.09 or <-1.09
 #define ACCEL_MOVE_SPEED_HIGH_G_VALUE 			4.0f	//accelerometer value >2or <-2
 #else
-/* Moving counter: 6 movements in 25*5ms = 0.75s time window */
-#define ACCEL_MOVE_COUNT_MIN 					6
-/* Non-moving counter: (30 - 6)*25*5ms = 3s time window */
-#define ACCEL_MOVE_COUNT_MAX 					30
+/* Moving counter: 4 movements in 25*5ms = 0.5s time window */
+#define ACCEL_MOVE_COUNT_MIN 					4
+/* Non-moving counter: (28 - 4)*25*5ms = 3s time window */
+#define ACCEL_MOVE_COUNT_MAX 					28
 /* Threshold of square of accelerometer value */
 #define ACCEL_MOVE_SPEED_MID_G_VALUE 			2.25f	//accelerometer value >1.5 or <-1.5
-#define ACCEL_MOVE_SPEED_HIGH_G_VALUE 			26.0f	//accelerometer value >3.x or <-3.x
+#define ACCEL_MOVE_SPEED_MIDHIGH_G_VALUE		9.00f	//accelerometer value >3.0 or <-3.0
+#define ACCEL_MOVE_SPEED_HIGH_G_VALUE 			26.0f	//accelerometer value >5.x or <-5.x
 #endif
 /* If last_sample_counter smaller than it, should not check current sample_counter */
 #define ACCE_LAST_SAMPLE_COUNTER_MIN 			20
@@ -100,7 +102,7 @@ static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(ACC_TWI_INSTANCE_ID
 /* Speed calculation interval (milliseconds) */
 #define ACCEL_SPEED_AND_CADENCE_CAL_INTERVAL 	SPEED_AND_CADENCE_MEAS_INTERVAL
 /* the number of report average speed after doing average function in speedAvg()*/
-#define ACCE_SPEED_AVG_WINDOWS 	3
+#define ACCE_SPEED_AVG_WINDOWS 	2
 
 APP_TIMER_DEF(m_csc_meas_timer_id);                                                 /**< CSC measurement timer. */
 
@@ -118,7 +120,7 @@ static uint16_t ui16_total_time = 0;
 static uint8_t 	ui8_movecnt = 0;
 /* Flag for switching the high speed algorithm or low speed algorithm */
 static t_accel_speed_flag 	acc_speed_high_flag = ACCE_SPEED_LOW;
-/* Flag for force report camdence */
+/* Flag for force report speed */
 static bool 	acc_meas_report_flag = false;
 /* lap indicator: range: 0 ~ 8 million km */
 static uint32_t ui32_total_step = 0;
@@ -159,12 +161,13 @@ static float 		lowPassExponential(float input, float average, float factor, floa
 static float 		movingAvg(float input);
 static uint32_t 	speedAvg(uint32_t input);
 static ret_code_t 	rw_lock_set(bool config);
-static bool 		rw_lock_get(void);
 static void 		accel_display_reg(void);
 static void 		speed_flag_set(uint32_t current_speed);
 static bool		 	mid_speed_flag_get(void);
 #ifdef ACC_ST16G_ENABLE
 static void 		accel_lis2de12_reset_reg(void);
+static ret_code_t 	lis2dh12_wait_for_data(int timeout_ms);
+static ret_code_t 	accel_dump_reg_info(uint8_t * ctrl_reg , uint8_t size);
 #endif
 
 /**@brief handler for interrupt of input pin1, for Motion Detection event
@@ -189,7 +192,8 @@ void int1_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
 #endif
 	}
 #else
-	uint8_t fifo_src = (LIS2DE12_FIFO_SRC_REG_CNT_MSK | LIS2DE12_FIFO_SRC_REG_WTM);
+	uint8_t fifo_src =  (LIS2DE12_FIFO_SRC_REG_CNT_MSK | LIS2DE12_FIFO_SRC_REG_WTM);
+	//accel_read_reg(LIS2DE12_FIFO_SRC_REG, 	&fifo_src);
 #ifdef SENSOR_DEBUG_OUTPUT
 	uint8_t int_src = 0, ui8_int_ref = 0;
 	accel_read_reg(LIS2DE12_INT_REFERENCE, 	&ui8_int_ref);
@@ -202,11 +206,11 @@ void int1_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
 	{
 		ret_code_t result;
 		/* watermark is not full, wait until watermark is full */
-		if((fifo_src & (LIS2DE12_FIFO_SRC_REG_CNT_MSK)) < (DEF_WATERMARK_VAL))
-		{
-			NRF_LOG_INFO("Warning!!! FIFO watermark is not full, do not need to read buffer.");
-			return;
-		}
+		//if((fifo_src & (LIS2DE12_FIFO_SRC_REG_CNT_MSK)) < (DEF_WATERMARK_VAL))
+		//{
+		//	NRF_LOG_INFO("Warning!!! FIFO watermark is not full, do not need to read buffer.");
+		//	return;
+		//}
 		/* rise SENSOR_TASK_INT_FIFO to process the data of buffer in idle_state_handle() later */
 #ifdef ACCELEROMETER_DUMP_FIFO
 		result = accel_task_enable_mask(SENSOR_TASK_INT_DUMP);
@@ -328,7 +332,7 @@ static ret_code_t accel_write_reg(uint8_t reg_addr, uint8_t reg_data)
 
     nrf_delay_ms(1);
 	if (err_code)
-		NRF_LOG_INFO(0, "accel_write_reg error\r\n");
+		NRF_LOG_INFO("accel_write_reg error");
 	APP_ERROR_CHECK(err_code);
 	return err_code;
 }
@@ -361,7 +365,8 @@ static ret_code_t accel_read_reg(uint8_t reg_addr, uint8_t *reg_data)
 		//retry
 		err_code = nrf_drv_twi_rx(&acce_m_twi, ACC_I2C_ADDRESS, reg_data, 1);
 	}
-	APP_ERROR_CHECK(err_code);
+	if(reg_addr != LIS2DE12_WHO_AM_I)
+		APP_ERROR_CHECK(err_code);
 	return err_code;
 }
 
@@ -381,7 +386,7 @@ static ret_code_t accel_burst_read_reg(uint8_t reg_addr, uint8_t * reg_data, siz
 #endif
 	/* write register address */
 	err_code = nrf_drv_twi_tx(&acce_m_twi, ACC_I2C_ADDRESS, &addr8, 1, true);
-	nrf_delay_ms(2); // LIS2DH12 shall delay 2 ms after I2C write to avoid exception
+	nrf_delay_ms(3); // LIS2DH12 shall delay 2 ms after I2C write to avoid exception
 	if (err_code)
 	{
 		NRF_LOG_INFO("accel_burst_read_reg (W) error(0x%X).retry",err_code);
@@ -396,7 +401,7 @@ static ret_code_t accel_burst_read_reg(uint8_t reg_addr, uint8_t * reg_data, siz
 		nrf_delay_ms(2); // LIS2DH12 shall delay 2 ms after I2C write to avoid exception
 		err_code = nrf_drv_twi_rx(&acce_m_twi, ACC_I2C_ADDRESS, reg_data, size);
 	}
-	APP_ERROR_CHECK(err_code);
+	//APP_ERROR_CHECK(err_code);		// do not cause fatal error within burst read 
 	return err_code;
 }
 
@@ -463,10 +468,11 @@ static ret_code_t rw_lock_set(bool config)
 /**	@brief : rw_lock_get
 *  	@Return rw_lock_protect_flag true or false
 */
-static bool rw_lock_get(void)
-{
-	return rw_lock_protect_flag;
-}
+#define RW_LOCK_GET()	rw_lock_protect_flag
+//static bool rw_lock_get(void)
+//{
+//	return rw_lock_protect_flag;
+//}
 
 /**	@brief : speed_flag_set
 *	@param : value current_speed_sample turn into speed in meter per hour
@@ -483,11 +489,11 @@ static void speed_flag_set(uint32_t current_speed)
 	{
 		acc_speed_high_flag = ACCE_SPEED_HIGH;
 	}
-	else if(current_speed > ACCEL_MOVE_SPEED_MEDHIGH_MH)
+	else if((current_speed > ACCEL_MOVE_SPEED_MEDHIGH_MH) || ((last_average_weighting * last_average_weighting) > ACCEL_MOVE_SPEED_MIDHIGH_G_VALUE))
 	{
 		acc_speed_high_flag = ACCE_SPEED_MIDHIGH;
 	}
-	else if(current_speed > ACCEL_MOVE_SPEED_MED_MH || ((last_average_weighting * last_average_weighting) > ACCEL_MOVE_SPEED_MID_G_VALUE))
+	else if((current_speed > ACCEL_MOVE_SPEED_MED_MH) || ((last_average_weighting * last_average_weighting) > ACCEL_MOVE_SPEED_MID_G_VALUE))
 	{
 		acc_speed_high_flag = ACCE_SPEED_MID;
 	}
@@ -595,8 +601,8 @@ static void accel_configuration(void)
 		NRF_LOG_INFO("Sensor type: LIS2DE12.");
 	}
 
-	/* Reset chip */
-	nrf_delay_ms(50);
+	/* Reset the chip */
+	nrf_delay_ms(2);
 	accel_lis2de12_reset_reg();
 	nrf_delay_ms(50);
 
@@ -619,8 +625,17 @@ static void accel_configuration(void)
 	accel_wake_up();
 	accel_display_reg();
 
-	/* Turn off the Red light (low enable) once finishing the communication with accelerometer */
-	nrf_drv_gpiote_out_set(ACC_LEDR_PIN);
+	if(accel_lis2de12_selftest() != NRF_SUCCESS)
+    {
+		/* Turn on the Red light */
+		nrf_drv_gpiote_out_clear(ACC_LEDR_PIN);
+		NRF_LOG_INFO("Self Test Failed!!!");
+    }
+	else
+	{
+		/* Turn off the Red light (low enable) once finishing the communication with accelerometer */
+		nrf_drv_gpiote_out_set(ACC_LEDR_PIN);
+	}
 }
 
 #ifdef ACC_ST16G_ENABLE
@@ -628,6 +643,14 @@ static void accel_configuration(void)
  */
 static void accel_lis2de12_reset_reg(void)
 {
+
+    // Set bypass to clear the fifo
+	accel_write_reg(LIS2DE12_FIFO_CTRL_REG, 		0x00 );
+	nrf_delay_ms(50);
+    // Reboot the chip
+	accel_write_reg(LIS2DE12_REG5, 					LIS2DE12_REG5_REBOOT );
+	nrf_delay_ms(200);
+
 	accel_write_reg(LIS2DE12_REG0, 					0x10 );
 	accel_write_reg(LIS2DE12_REG1, 					0x07 );
 	accel_write_reg(LIS2DE12_REG2, 					0x00 );
@@ -636,7 +659,6 @@ static void accel_lis2de12_reset_reg(void)
 	accel_write_reg(LIS2DE12_REG5, 					0x00 );
 	accel_write_reg(LIS2DE12_REG6, 					0x00 );
 	accel_write_reg(LIS2DE12_INT_REFERENCE, 		0x00 );
-	accel_write_reg(LIS2DE12_FIFO_CTRL_REG, 		0x00 );
 	accel_write_reg(LIS2DE12_INT1_CFG_REG, 			0x00 );
 	accel_write_reg(LIS2DE12_INT1_THRESHHOLD_REG, 	0x00 );
 	accel_write_reg(LIS2DE12_INT1_DURATION_REG, 	0x00 );
@@ -651,7 +673,91 @@ static void accel_lis2de12_reset_reg(void)
 	accel_write_reg(LIS2DE12_ACT_THS_REG, 			0x00 );
 	accel_write_reg(LIS2DE12_ACT_DUR_REG, 			0x00 );
 }
+
+static ret_code_t lis2dh12_wait_for_data(int timeout_ms)
+{
+	ret_code_t rc = NRF_SUCCESS;
+    uint8_t status;
+    uint32_t time_limit = app_timer_cnt_get() + (timeout_ms * APP_TIMER_CLOCK_FREQ);
+
+    while (1) {
+        rc = accel_read_reg(LIS2DE12_STATUS, &status);
+        if (rc != NRF_SUCCESS || (status & LIS2DE12_STATUS_ZYXDA) != 0) {
+            break;
+        }
+        if (app_timer_cnt_get()  > time_limit) {
+            rc = NRF_ERROR_INVALID_STATE;
+            break;
+        }
+    	nrf_delay_ms(1);
+    }
+    return rc;
+}
 #endif
+
+/**@brief Function for accel_lis2de12_selftest, only call it when in initiating state
+ */
+ret_code_t accel_lis2de12_selftest(void)
+{
+#ifdef ACC_ST16G_ENABLE
+	uint8_t ctrl_reg[20];
+	// LeyzneProSPD initial register value
+	const uint8_t speed_verified_words[20] = {0x10,0x2F,0x00,0x04,0xB8,0x40,0x00,0x19,0x28,0x08,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
+	ret_code_t check_flag = NRF_SUCCESS;
+
+	check_flag = accel_dump_reg_info((uint8_t *) ctrl_reg, 20);
+	if( check_flag == NRF_SUCCESS)
+	{
+		//check
+		//10-2F-00-04-B8-40-00-19-28-08-00-00-00-00-00-00-00-00-00
+		for(uint8_t i = 0; i<20; i++)
+		{
+			if(ctrl_reg[i] != speed_verified_words[i])
+			{
+				check_flag = NRF_ERROR_INVALID_STATE;
+				NRF_LOG_INFO("INCONSISTENT:%d,%x",i,ctrl_reg[i] );
+			}
+		}
+		if(check_flag != NRF_SUCCESS)
+			return check_flag;
+	}
+	// check G value
+	uint8_t check_data[6] = {0};
+	int16_t int16_x = 0, int16_y = 0, int16_z = 0;
+	int16_t mx = 0, my = 0, mz = 0; //mg
+	#define ACCEL_G_VALUE_CITERIA_MAX 	3000
+	#define ACCEL_G_VALUE_CITERIA_MIN 	-3000
+
+	//skip first one shot fifo output data
+	check_flag = lis2dh12_wait_for_data(10);
+	check_flag += accel_burst_read_reg(LIS2DE12_OUT_FIFO, check_data, 6);
+	// one shot fifo data
+	check_flag += lis2dh12_wait_for_data(10);
+	if(check_flag == NRF_SUCCESS)
+	{
+		check_flag = accel_burst_read_reg(LIS2DE12_OUT_FIFO, check_data, 6);
+		int16_x= (int16_t)((uint16_t)((uint16_t)check_data[1] << 8) | (uint16_t)check_data[0]);
+		int16_y = (int16_t)((uint16_t)((uint16_t)check_data[3] << 8) | (uint16_t)check_data[2]);
+		int16_z = (int16_t)((uint16_t)((uint16_t)check_data[5] << 8) | (uint16_t)check_data[4]);
+
+		mx = ((float)int16_x*ACCEL_SENSITIVITY_MG_CONFIG)/(float)(16);
+		my = ((float)int16_y*ACCEL_SENSITIVITY_MG_CONFIG)/(float)(16);
+		mz = ((float)int16_z*ACCEL_SENSITIVITY_MG_CONFIG)/(float)(16);
+
+		NRF_LOG_INFO("X:%d Y:%d Z:%d", mx, my, mz);
+		if((mx > ACCEL_G_VALUE_CITERIA_MAX) || ( mx < ACCEL_G_VALUE_CITERIA_MIN)
+			|| (my > ACCEL_G_VALUE_CITERIA_MAX) || ( my < ACCEL_G_VALUE_CITERIA_MIN)
+			|| (mz > ACCEL_G_VALUE_CITERIA_MAX) || ( mz < ACCEL_G_VALUE_CITERIA_MIN))
+		{
+			NRF_LOG_INFO("XYZDATA exceed normal range!!");
+			check_flag = NRF_ERROR_INVALID_STATE;
+		}
+	}
+	return check_flag;
+#else
+	return NRF_SUCCESS;
+#endif
+}
 
 /**@brief Function for debugging.
  */
@@ -925,8 +1031,8 @@ static float lowPassExponential(float input, float average, float factor, float 
 static float movingAvg(float input)
 {
 	#define ACCE_MOVING_AVG_WINDOWS_HIGH 		3		// define the number of samples for HIGH speed state for moving average
-	#define ACCE_MOVING_AVG_WINDOWS_MIDHIGH 	8  		// define the number of samples for MIDHIGH speed state for moving average
-	#define ACCE_MOVING_AVG_WINDOWS_MID 		13		// define the number of samples for LOW and MID speed state for moving average
+	#define ACCE_MOVING_AVG_WINDOWS_MIDHIGH 	9  		// define the number of samples for MIDHIGH speed state for moving average
+	#define ACCE_MOVING_AVG_WINDOWS_MID 		12		// define the number of samples for LOW and MID speed state for moving average
 	#define ACCE_MOVING_AVG_WINDOWS_LOW 		18		// define the number of samples for LOW and MID speed state for moving average
 	#define ACCE_MOVING_AVG_WINDOWS_MAXIMUM 	ACCE_MOVING_AVG_WINDOWS_LOW
 
@@ -958,20 +1064,18 @@ static float movingAvg(float input)
  */
 static uint32_t speedAvg(uint32_t input)
 {
+	static uint32_t 	last_speed_meas_avg_kmh = 0;
+	static uint32_t		last_input_speed = 0;
+	uint32_t	speed_meas_avg_kmh = 0;
+	last_speed_meas_avg_kmh = (last_speed_meas_avg_kmh + speed_meas_avg_kmh + speed_meas_avg_kmh) / 3;
 
-	static uint32_t 	speed_arr_numbers[ACCE_SPEED_AVG_WINDOWS] ={0};
-	static uint32_t 	speed_last_pos = 0;
-	static uint32_t 	speed_total_sum = 0;
-	/* Subtract the oldest number from the prev sum, add the new number */
-	speed_total_sum = speed_total_sum + input - speed_arr_numbers[speed_last_pos];
-	/* Assign the input to the position in the array */
-	speed_arr_numbers[speed_last_pos] = input;
-	speed_last_pos = (speed_last_pos + 1) % ACCE_SPEED_AVG_WINDOWS;
 	/* return the average */
-	if(speed_arr_numbers[speed_last_pos] == 0)
-		return (speed_total_sum / (ACCE_SPEED_AVG_WINDOWS - 1));
+	if(last_input_speed == 0)
+		speed_meas_avg_kmh = input;
 	else
-		return (speed_total_sum / ACCE_SPEED_AVG_WINDOWS);
+		speed_meas_avg_kmh = ((input + last_input_speed) / ACCE_SPEED_AVG_WINDOWS);
+	last_input_speed = input;
+	return speed_meas_avg_kmh;
 }
 
 /**@brief Function for dump x,y,z g x 1000 value to ota.
@@ -1121,14 +1225,13 @@ static void acc_step_update_angle(uint16_t *angle_array, float *mag_array)
 
 		current_angle += temp_angle_diff;
 	}
-
-	current_angle = abs(current_angle);
-	last_angle_residue = angle_array[DEF_WATERMARK_VAL-1];		// update last_angle_residue for current last_angle
-
-	/* event time is 1024-based. maximum value shall less that  64,000 (0x10000 / 0x800 * 2000) */
+	/* event time is 1024-based. maximum value shall less than 64,000 (0x10000 / 0x800 * 2000) */
 	ui16_total_time = (ui16_total_time + diff_time) % (DEF_TOTAL_TIME_STAMP_MAXIMUM);
 	last_ticks = ticks_current;
 	rw_lock_set(false);	//release protection
+
+	current_angle = abs(current_angle);
+	last_angle_residue = angle_array[DEF_WATERMARK_VAL-1];		// update last_angle_residue for current last_angle
 
 	/* movement detection */
 	if(current_angle < ACCEL_MOVE_ANGLE_MIN) 	// speed < 2.0kmh
@@ -1217,14 +1320,14 @@ static void acc_step_mag_update(float mag_update_value)
 	#define LIMITED_FACTOR_LOW_SPEED			0.38f
 
 	/* mid speed configuration: 16km ~ 30km */
-	#define LOW_PASS_FACTOR_MID_SPEED 			0.40f // ensure factor belongs to  [0,1]
-	#define AVERAGE_FACTOR_MID_SPEED			0.042f // ensure factor belongs to  [0,1]
+	#define LOW_PASS_FACTOR_MID_SPEED 			0.42f // ensure factor belongs to  [0,1]
+	#define AVERAGE_FACTOR_MID_SPEED			0.045f // ensure factor belongs to  [0,1]
 	#define LIMITED_FACTOR_MID_SPEED			0.45f
 
 	/* mid-high speed configuration: 30 ~ 45 */
 	#define LOW_PASS_FACTOR_MIDHIGH_SPEED 		0.48f // ensure factor belongs to  [0,1]
 	#define AVERAGE_FACTOR_MIDHIGH_SPEED		0.052f // ensure factor belongs to  [0,1]
-	#define LIMITED_FACTOR_MIDHIGH_SPEED		0.52f
+	#define LIMITED_FACTOR_MIDHIGH_SPEED		0.48f
 
 	/* high speed configuration: over 45 */
 	#define LOW_PASS_FACTOR_HIGH_SPEED 			0.8f // ensure factor belongs to  [0,1]
@@ -1233,21 +1336,21 @@ static void acc_step_mag_update(float mag_update_value)
 
 	/* window */
 	#define MAX_FILTER_WINDOW_HIGH_SPEED   		0.13f
-	#define MAX_FILTER_WINDOW_MIDHIGH_SPEED	   	0.22f
-	#define MAX_FILTER_WINDOW_MID_SPEED	   	    0.27f
+	#define MAX_FILTER_WINDOW_MIDHIGH_SPEED	   	0.27f
+	#define MAX_FILTER_WINDOW_MID_SPEED	   	    0.26f
 	#define MAX_FILTER_WINDOW_LOW_SPEED	   	    0.20f
 
 	/* extra offset for minimum line */
 	#define MAX_FILTER_WINDOW_MIN_OFFSET   		0.10f
 #endif
 	/* allows minimum samples in different speed */
-	#define ACCE_SPEED_HIGH_DIFF_MINI  			12		// 12-samples is around 120 km/h
-	#define ACCE_SPEED_MIDHIGH_DIFF_MINI 		21 		// 21-samples is around 72 km/h
-	#define ACCE_SPEED_MID_DIFF_MINI 			27		// 27-samples is around 60 km/h
-	#define ACCE_SPEED_LOW_DIFF_MINI 			37  	// 37-samples is around 40 km/h
-	#define ACCE_RISING_EDGE_ALLOWED_DIFF 		16.6	// When speed goes up, the maximum speed difference between two consecutive laps.
+	#define ACCE_SPEED_HIGH_DIFF_MINI  			12		// 12-samples is around 120 km/h  (1000 / samples / DataRate) * 3.6 * 2.1 = km/h
+	#define ACCE_SPEED_MIDHIGH_DIFF_MINI 		19 		// 21-samples is around 72 km/h
+	#define ACCE_SPEED_MID_DIFF_MINI 			25		// 27-samples is around 65 km/h
+	#define ACCE_SPEED_LOW_DIFF_MINI 			35  	// 37-samples is around 45 km/h
+	#define ACCE_RISING_EDGE_ALLOWED_DIFF 		17	// When speed goes up, the maximum speed difference between two consecutive laps.
 	#define ACCE_RISING_EDGE_ALLOWED_DIFF2 		11		// When speed goes up, 2nd check parameter
-	#define ACCE_FALLING_EDGE_ALLOWED_DIFF 		13.2 	// when speed goes down, the maximum speed difference between two consecutive laps.
+	#define ACCE_FALLING_EDGE_ALLOWED_DIFF 		13.6 	// when speed goes down, the maximum speed difference between two consecutive laps.
 	#define ACCE_FALLING_EDGE_ALLOWED_DIFF2 	8 		// when speed goes down, 2nd check parameter
 
 	#define MAX_LIMITED_FACTOR_HIGH_SPEED		2.0f
@@ -1256,7 +1359,8 @@ static void acc_step_mag_update(float mag_update_value)
 	static step_detect_t  step_state = eSTEP_RESET; 		// State variable for zero crossing judgment
 	static float 	peakmax = 0, valleymax = 0;
 	static float 	last_mag_update_value = 0;
-	static bool 	short_samples_allowed_flag = false, two_laps_flag = false;
+	static bool 	short_samples_allowed_flag = false;
+	static uint8_t 	two_laps_flag_c = 0;
 	float 			step_temp_min = 0, step_temp_max = 0;
 	float 			filter_window = 0, low_pass_factor = 0, average_factor = 0, limited_factor = 0, limited_samples = 0;
 
@@ -1397,21 +1501,21 @@ static void acc_step_mag_update(float mag_update_value)
 							acc_meas_report_flag = true;
 						}
 
-						if (!two_laps_flag && (oneshot_speed_kmh < (oneshot_speed_avg - ACCE_FALLING_EDGE_ALLOWED_DIFF )) && (oneshot_speed_kmh *2) < (oneshot_speed_avg + ACCE_RISING_EDGE_ALLOWED_DIFF))
+						if ((two_laps_flag_c < 2)  && (oneshot_speed_kmh < (oneshot_speed_avg - ACCE_FALLING_EDGE_ALLOWED_DIFF )) && (oneshot_speed_kmh *2) < (oneshot_speed_avg + ACCE_RISING_EDGE_ALLOWED_DIFF))
 						{
 							ui32_total_step++;
 							oneshot_speed_kmh *= 2;
-							two_laps_flag = true;
+							two_laps_flag_c++;
 							short_samples_allowed_flag = false;
 						}
 						else if ((oneshot_speed_kmh < (oneshot_speed_avg - ACCE_FALLING_EDGE_ALLOWED_DIFF2 )))
 						{
 							short_samples_allowed_flag = true;
-							two_laps_flag = false;
+							two_laps_flag_c = 0;
 						}
 						else
 						{
-							two_laps_flag = false;
+							two_laps_flag_c = 0;
 							short_samples_allowed_flag = false;
 						}
 
@@ -1494,8 +1598,8 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
     static uint16_t uin16_not_moving_counter 	= 0;								// overflow after 18 hours, no need to check
     uint16_t 		event_time_inc 				= 0, total_time_diff = 0, ui16_wheel_event_time = 0;	// event time is 1024-based time
     uint16_t 		current_sample 				= 0;
-
-    if(rw_lock_get())	// if rw_lock is ture means the critical global variable is updating.
+   
+    if(RW_LOCK_GET())	// if rw_lock is ture means the critical global variable is updating.
     {
     	NRF_LOG_INFO("Warning!!! Read and Write collision, skip report");
 #ifdef SENSOR_DEBUG_OUTPUT
@@ -1547,14 +1651,18 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 
 	total_time_diff = (ui16_total_time>ui16_last_total_time)? ui16_total_time - ui16_last_total_time : ui16_total_time + DEF_TOTAL_TIME_STAMP_MAXIMUM - ui16_last_total_time;
 
-	/* step based time event calculation*/
-	current_sample = (uint16_t)(ui32_step_detect_number - ui32_last_step_detect);
-	event_time_inc = (uint16_t)((float)(current_sample * ((float)total_time_diff/(float)(ui32_step_sample_counter - ui32_last_step_sample)))*ACCEL_EVENT_TIME_FACTOR);
-
-	/* speed calculation */
+	uint32_t speed_kmh = 0;
 	uint16_t current_lap = ui32_total_step - ui32_last_lap;
-	/* speed = current lap * circumference (mm) * 36000(s) / ((wheel event - last event time)/1024*1000) */
-	uint32_t speed_kmh = (float)(current_lap * DEF_ANGLE_360_DEGREE * ANGLE_SPEED_TO_METER_PER_HOUR *ACCEL_EVENT_TIME_FACTOR/ (event_time_inc));
+	if((ui32_step_detect_number != ui32_last_step_detect ) && (ui32_step_sample_counter != ui32_last_step_sample))
+	{
+		/* step based time event calculation*/
+		current_sample = (uint16_t)(ui32_step_detect_number - ui32_last_step_detect);
+		event_time_inc = (uint16_t)((float)(current_sample * ((float)total_time_diff/(float)(ui32_step_sample_counter - ui32_last_step_sample)))*ACCEL_EVENT_TIME_FACTOR);
+
+		/* speed calculation */
+		/* speed = current lap * circumference (mm) * 36000(s) / ((wheel event - last event time)/1024*1000) */
+		speed_kmh = ((float)current_lap * DEF_ANGLE_360_DEGREE * ANGLE_SPEED_TO_METER_PER_HOUR *ACCEL_EVENT_TIME_FACTOR/ (event_time_inc));
+	}
 
 	oneshot_speed_avg = speed_kmh/1000;
 	/* Set speed flag */
@@ -1563,12 +1671,11 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 	/* recalculate even time driving from average speed */
 	uint32_t average_speed_kmh = speedAvg(speed_kmh);
 
-	/* new event time */
-	event_time_inc = (uint16_t)((float)(current_lap * DEF_ANGLE_360_DEGREE * ANGLE_SPEED_TO_METER_PER_HOUR *ACCEL_EVENT_TIME_FACTOR/ (average_speed_kmh)));
-
 	/* calculate wheel event time */
-	if(event_time_inc != 0)
+	if(average_speed_kmh != 0)
 	{
+		/* new event time */
+		event_time_inc = (uint16_t)((float)(current_lap * DEF_ANGLE_360_DEGREE * ANGLE_SPEED_TO_METER_PER_HOUR *ACCEL_EVENT_TIME_FACTOR/ (average_speed_kmh)));
 		ui16_wheel_event_time = ui16_last_event_time + event_time_inc;
 		ui32_last_step_detect = ui32_step_detect_number;
 		uin16_not_moving_counter = 0;
@@ -1609,6 +1716,44 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 	ui16_last_event_time 	= ui16_wheel_event_time;
 	ui16_last_total_time 	= ui16_total_time;
     return NRF_SUCCESS;
+}
+
+/**@brief Function for accel_dump_reg_info
+ */
+ret_code_t accel_dump_reg_info(uint8_t * ctrl_reg , uint8_t size)
+{
+    //uint8_t ctrl_reg[22];
+    if (size < 20)
+    {
+    	return NRF_ERROR_INVALID_STATE;
+    }
+
+	accel_read_reg(LIS2DE12_REG0, 					&ctrl_reg[0] );
+	accel_read_reg(LIS2DE12_REG1, 					&ctrl_reg[1] );
+	accel_read_reg(LIS2DE12_REG2, 					&ctrl_reg[2] );
+	accel_read_reg(LIS2DE12_REG3, 					&ctrl_reg[3] );
+	accel_read_reg(LIS2DE12_REG4, 					&ctrl_reg[4] );
+	accel_read_reg(LIS2DE12_REG5, 					&ctrl_reg[5] );
+	accel_read_reg(LIS2DE12_REG6, 					&ctrl_reg[6] );
+	accel_read_reg(LIS2DE12_FIFO_CTRL_REG, 			&ctrl_reg[7] );
+	accel_read_reg(LIS2DE12_INT1_CFG_REG, 			&ctrl_reg[8] );
+	accel_read_reg(LIS2DE12_INT1_THRESHHOLD_REG, 	&ctrl_reg[9] );
+	accel_read_reg(LIS2DE12_INT1_DURATION_REG, 		&ctrl_reg[10] );
+	accel_read_reg(LIS2DE12_INT2_CFG_REG,		 	&ctrl_reg[11] );
+	accel_read_reg(LIS2DE12_INT2_THRESHHOLD_REG, 	&ctrl_reg[12] );
+	accel_read_reg(LIS2DE12_INT2_DURATION_REG, 		&ctrl_reg[13] );
+	accel_read_reg(LIS2DE12_CLICK_CFG_REG, 			&ctrl_reg[14] );
+	accel_read_reg(LIS2DE12_CLICK_THS_REG, 			&ctrl_reg[15] );
+	accel_read_reg(LIS2DE12_TIME_LIMIT_REG, 		&ctrl_reg[16] );
+	accel_read_reg(LIS2DE12_TIME_LATENCY_REG, 		&ctrl_reg[17] );
+	accel_read_reg(LIS2DE12_TIME_WINDOW_REG, 		&ctrl_reg[18] );
+	accel_read_reg(LIS2DE12_ACT_THS_REG, 			&ctrl_reg[19] );
+	//NRF_LOG_INFO("R:%x %x %x %x %x %x" ,ctrl_reg[0], ctrl_reg[1], ctrl_reg[2], ctrl_reg[3], ctrl_reg[4], ctrl_reg[5]);
+	//NRF_LOG_INFO("R:%x %x %x %x %x %x" ,ctrl_reg[6], ctrl_reg[7], ctrl_reg[8], ctrl_reg[9], ctrl_reg[10], ctrl_reg[11]);
+	//NRF_LOG_INFO("R:%x %x %x %x %x %x" ,ctrl_reg[12], ctrl_reg[13], ctrl_reg[14], ctrl_reg[15], ctrl_reg[16], ctrl_reg[17]);
+	//NRF_LOG_INFO("R:%x %x" ,ctrl_reg[18], ctrl_reg[19]);
+
+	return NRF_SUCCESS;
 }
 
 /**@brief Function initialize function.

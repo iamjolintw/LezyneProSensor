@@ -9,6 +9,7 @@
  *					 2019/08/07  Cycling Cadence version
  *                   2019/09/25  porting 4nd version zero crossing algorithm from Speed sensor
  *                   2019/11/16  New Cadence algorithm
+ *					 2019/12/10  add selftest function
  *
  */
 
@@ -37,8 +38,8 @@
 static const nrf_drv_twi_t acce_m_twi = NRF_DRV_TWI_INSTANCE(ACC_TWI_INSTANCE_ID);
 
 /* Configuration */
-//#define SENSOR_DEBUG_OUTPUT				// test purpose: switch for log message
 //#define SENSOR_ALWAYS_REPORT_DEBUG		// test purpose: always report measurement even speed is zero
+//#define SENSOR_DEBUG_OUTPUT				// test purpose: switch for log message
 
 /* Data rate 10ms = 100Hz, the highest bicycle speed = 75 Km/h = 20.83 m/s,
    max RPM = 20.83 / 2m (circumference) = 10.41 Hz, but needs at least 4 samples for calculation = 41.64 Hz ~= 50Hz */
@@ -168,12 +169,13 @@ static float 		movingAvg(float input);
 static float 		rpmAvg(uint16_t input);
 static float 		bandpassEMA(float input);
 static ret_code_t 	rw_lock_set(bool config);
-static bool 		rw_lock_get(void);
 static void 		accel_display_reg(void);
 static void 		speed_flag_set(uint16_t current_speed);
 static bool		 	mid_speed_flag_get(void);
 #ifdef ACC_ST16G_ENABLE
 static void 		accel_lis2de12_reset_reg(void);
+static ret_code_t 	lis2dh12_wait_for_data(int timeout_ms);
+static ret_code_t 	accel_dump_reg_info(uint8_t * ctrl_reg , uint8_t size);
 #endif
 
 /**@brief handler for interrupt of input pin1, for Motion Detection event
@@ -198,7 +200,8 @@ void int1_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
 #endif
 	}
 #else
-	uint8_t fifo_src = (LIS2DE12_FIFO_SRC_REG_CNT_MSK | LIS2DE12_FIFO_SRC_REG_WTM);
+	uint8_t fifo_src =  (LIS2DE12_FIFO_SRC_REG_CNT_MSK | LIS2DE12_FIFO_SRC_REG_WTM);
+	//accel_read_reg(LIS2DE12_FIFO_SRC_REG, 	&fifo_src);
 #ifdef SENSOR_DEBUG_OUTPUT
 	uint8_t int_src = 0, ui8_int_ref = 0;
 	accel_read_reg(LIS2DE12_INT_REFERENCE, 	&ui8_int_ref);
@@ -211,11 +214,11 @@ void int1_handler(nrf_drv_gpiote_pin_t pin, nrf_gpiote_polarity_t action)
 	{
 		ret_code_t result;
 		/* watermark is not full, wait until watermark is full */
-		if((fifo_src & (LIS2DE12_FIFO_SRC_REG_CNT_MSK)) < (DEF_WATERMARK_VAL))
-		{
-			NRF_LOG_INFO("Warning!!! FIFO watermark is not full, do not need to read buffer.");
-			return;
-		}
+		//if((fifo_src & (LIS2DE12_FIFO_SRC_REG_CNT_MSK)) < (DEF_WATERMARK_VAL))
+		//{
+		//	NRF_LOG_INFO("Warning!!! FIFO watermark is not full, do not need to read buffer.");
+		//	return;
+		//}
 		/* rise SENSOR_TASK_INT_FIFO to process the data of buffer in idle_state_handle() later */
 #ifdef ACCELEROMETER_DUMP_FIFO
 		result = accel_task_enable_mask(SENSOR_TASK_INT_DUMP);
@@ -337,7 +340,7 @@ static ret_code_t accel_write_reg(uint8_t reg_addr, uint8_t reg_data)
 
     nrf_delay_ms(1);
 	if (err_code)
-		NRF_LOG_INFO(0, "accel_write_reg error\r\n");
+		NRF_LOG_INFO("accel_write_reg error\r\n");
 	APP_ERROR_CHECK(err_code);
 	return err_code;
 }
@@ -370,7 +373,8 @@ static ret_code_t accel_read_reg(uint8_t reg_addr, uint8_t *reg_data)
 		//retry
 		err_code = nrf_drv_twi_rx(&acce_m_twi, ACC_I2C_ADDRESS, reg_data, 1);
 	}
-	APP_ERROR_CHECK(err_code);
+	if(reg_addr != LIS2DE12_WHO_AM_I)
+		APP_ERROR_CHECK(err_code);
 	return err_code;
 }
 
@@ -390,7 +394,7 @@ static ret_code_t accel_burst_read_reg(uint8_t reg_addr, uint8_t * reg_data, siz
 #endif
 	/* write register address */
 	err_code = nrf_drv_twi_tx(&acce_m_twi, ACC_I2C_ADDRESS, &addr8, 1, true);
-	nrf_delay_ms(2); // LIS2DH12 shall delay 2 ms after I2C write to avoid exception
+	nrf_delay_ms(3); // LIS2DH12 shall delay 2 ms after I2C write to avoid exception
 	if (err_code)
 	{
 		NRF_LOG_INFO("accel_burst_read_reg (W) error(0x%X).retry",err_code);
@@ -405,7 +409,7 @@ static ret_code_t accel_burst_read_reg(uint8_t reg_addr, uint8_t * reg_data, siz
 		nrf_delay_ms(2); // LIS2DH12 shall delay 2 ms after I2C write to avoid exception
 		err_code = nrf_drv_twi_rx(&acce_m_twi, ACC_I2C_ADDRESS, reg_data, size);
 	}
-	APP_ERROR_CHECK(err_code);
+	//APP_ERROR_CHECK(err_code);		// do not cause fatal error within burst read 
 	return err_code;
 }
 
@@ -473,10 +477,10 @@ static ret_code_t rw_lock_set(bool config)
 *  	@Return rw_lock_protect_flag true or false
 */
 #define RW_LOCK_GET()	rw_lock_protect_flag
-static bool rw_lock_get(void)
-{
-	return rw_lock_protect_flag;
-}
+//static bool rw_lock_get(void)
+//{
+//	return rw_lock_protect_flag;
+//}
 
 /**	@brief : speed_flag_set
 *	@param : value current_speed_sample turn into speed in meter per hour
@@ -606,7 +610,7 @@ static void accel_configuration(void)
 	}
 
 	/* Reset chip */
-	nrf_delay_ms(50);
+	nrf_delay_ms(2);
 	accel_lis2de12_reset_reg();
 	nrf_delay_ms(50);
 
@@ -629,8 +633,16 @@ static void accel_configuration(void)
 	accel_wake_up();
 	accel_display_reg();
 
-	/* Turn off the Red light (low enable) once finishing the communication with accelerometer */
-	nrf_drv_gpiote_out_set(ACC_LEDR_PIN);
+	if(accel_lis2de12_selftest() != NRF_SUCCESS)
+    {
+		nrf_drv_gpiote_out_clear(ACC_LEDR_PIN);
+		NRF_LOG_INFO("Self Test Failed!!!");
+    }
+	else
+	{
+		/* Turn off the Red light (low enable) once finishing the communication with accelerometer */
+		nrf_drv_gpiote_out_set(ACC_LEDR_PIN);
+	}
 }
 
 #ifdef ACC_ST16G_ENABLE
@@ -638,6 +650,14 @@ static void accel_configuration(void)
  */
 static void accel_lis2de12_reset_reg(void)
 {
+
+    // Set bypass to clear the fifo
+	accel_write_reg(LIS2DE12_FIFO_CTRL_REG, 		0x00 );
+	nrf_delay_ms(50);
+    // Reboot the chip
+	accel_write_reg(LIS2DE12_REG5, 					LIS2DE12_REG5_REBOOT );
+	nrf_delay_ms(200);
+
 	accel_write_reg(LIS2DE12_REG0, 					0x10 );
 	accel_write_reg(LIS2DE12_REG1, 					0x07 );
 	accel_write_reg(LIS2DE12_REG2, 					0x00 );
@@ -646,7 +666,6 @@ static void accel_lis2de12_reset_reg(void)
 	accel_write_reg(LIS2DE12_REG5, 					0x00 );
 	accel_write_reg(LIS2DE12_REG6, 					0x00 );
 	accel_write_reg(LIS2DE12_INT_REFERENCE, 		0x00 );
-	accel_write_reg(LIS2DE12_FIFO_CTRL_REG, 		0x00 );
 	accel_write_reg(LIS2DE12_INT1_CFG_REG, 			0x00 );
 	accel_write_reg(LIS2DE12_INT1_THRESHHOLD_REG, 	0x00 );
 	accel_write_reg(LIS2DE12_INT1_DURATION_REG, 	0x00 );
@@ -661,7 +680,91 @@ static void accel_lis2de12_reset_reg(void)
 	accel_write_reg(LIS2DE12_ACT_THS_REG, 			0x00 );
 	accel_write_reg(LIS2DE12_ACT_DUR_REG, 			0x00 );
 }
+
+static ret_code_t lis2dh12_wait_for_data(int timeout_ms)
+{
+	ret_code_t rc = NRF_SUCCESS;
+    uint8_t status;
+    uint32_t time_limit = app_timer_cnt_get() + (timeout_ms * APP_TIMER_CLOCK_FREQ);
+
+    while (1) {
+        rc = accel_read_reg(LIS2DE12_STATUS, &status);
+        if (rc != NRF_SUCCESS || (status & LIS2DE12_STATUS_ZYXDA) != 0) {
+            break;
+        }
+        if (app_timer_cnt_get()  > time_limit) {
+            rc = NRF_ERROR_INVALID_STATE;
+            break;
+        }
+    	nrf_delay_ms(1);
+    }
+    return rc;
+}
 #endif
+
+/**@brief Function for accel_lis2de12_selftest, only call it when in initiating state
+ */
+ret_code_t accel_lis2de12_selftest(void)
+{
+#ifdef ACC_ST16G_ENABLE
+	uint8_t ctrl_reg[20];
+	// LeyzneProCAD initial register value
+	const uint8_t speed_verified_words[20] = {0x10,0x2F,0x00,0x04,0xA8,0x40,0x00,0x19,0x0A,0x14,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00};
+	ret_code_t check_flag = NRF_SUCCESS;
+
+	check_flag = accel_dump_reg_info((uint8_t *) ctrl_reg, 20);
+	if( check_flag == NRF_SUCCESS)
+	{
+		//check
+		//10-2F-00-04-A8-40-00-19-0A-14-00-00-00-00-00-00-00-00-00
+		for(uint8_t i = 0; i<20; i++)
+		{
+			if(ctrl_reg[i] != speed_verified_words[i])
+			{
+				check_flag = NRF_ERROR_INVALID_STATE;
+				NRF_LOG_INFO("INCONSISTENT:%d,%x",i,ctrl_reg[i] );
+			}
+		}
+		if(check_flag != NRF_SUCCESS)
+			return check_flag;
+	}
+	// check G value
+	uint8_t check_data[6] = {0};
+	int16_t int16_x = 0, int16_y = 0, int16_z = 0;
+	int16_t mx = 0, my = 0, mz = 0; //mg
+	#define ACCEL_G_VALUE_CITERIA_MAX 	1500
+	#define ACCEL_G_VALUE_CITERIA_MIN 	-1500
+
+	//skip first one shot fifo output data
+	check_flag = lis2dh12_wait_for_data(10);
+	check_flag += accel_burst_read_reg(LIS2DE12_OUT_FIFO, check_data, 6);
+	// one shot fifo data
+	check_flag += lis2dh12_wait_for_data(10);
+	if(check_flag == NRF_SUCCESS)
+	{
+		check_flag = accel_burst_read_reg(LIS2DE12_OUT_FIFO, check_data, 6);
+		int16_x= (int16_t)((uint16_t)((uint16_t)check_data[1] << 8) | (uint16_t)check_data[0]);
+		int16_y = (int16_t)((uint16_t)((uint16_t)check_data[3] << 8) | (uint16_t)check_data[2]);
+		int16_z = (int16_t)((uint16_t)((uint16_t)check_data[5] << 8) | (uint16_t)check_data[4]);
+
+		mx = ((float)int16_x*ACCEL_SENSITIVITY_MG_CONFIG)/(float)(16);
+		my = ((float)int16_y*ACCEL_SENSITIVITY_MG_CONFIG)/(float)(16);
+		mz = ((float)int16_z*ACCEL_SENSITIVITY_MG_CONFIG)/(float)(16);
+
+		NRF_LOG_INFO("X:%d Y:%d Z:%d", mx, my, mz);
+		if((mx > ACCEL_G_VALUE_CITERIA_MAX) || ( mx < ACCEL_G_VALUE_CITERIA_MIN)
+			|| (my > ACCEL_G_VALUE_CITERIA_MAX) || ( my < ACCEL_G_VALUE_CITERIA_MIN)
+			|| (mz > ACCEL_G_VALUE_CITERIA_MAX) || ( mz < ACCEL_G_VALUE_CITERIA_MIN))
+		{
+			NRF_LOG_INFO("XYZDATA exceed normal range!!");
+			check_flag = NRF_ERROR_INVALID_STATE;
+		}
+	}
+	return check_flag;
+#else
+	return NRF_SUCCESS;
+#endif
+}
 
 /**@brief Function for debugging.
  */
@@ -1388,7 +1491,7 @@ static void acc_step_mag_update(float mag_update_value)
 #endif
 
 #ifdef SENSOR_DEBUG_OUTPUT
-	NRF_LOG_INFO("mag_update_value: %d, average_weighting: %d, min: %d, max: %d",(int16_t)(mag_update_value*1000),(int16_t)(last_average_weighting*1000),(int16_t)(step_temp_min*1000),(int16_t)(step_temp_max*1000));
+	//NRF_LOG_INFO("mag_update_value: %d, average_weighting: %d, min: %d, max: %d",(int16_t)(mag_update_value*1000),(int16_t)(last_average_weighting*1000),(int16_t)(step_temp_min*1000),(int16_t)(step_temp_max*1000));
 #endif
 
 	/* ============= Step 2: State machine for zero crossing ============= */
@@ -1485,7 +1588,7 @@ static void acc_step_mag_update(float mag_update_value)
 			break;
 	}
 #ifdef SENSOR_DEBUG_OUTPUT
-	NRF_LOG_INFO("step_state: %d, peakmax: %d, valleymax: %d",step_state,(int16_t)(peakmax*1000),(int16_t)(valleymax*1000));
+	//NRF_LOG_INFO("step_state: %d, peakmax: %d, valleymax: %d",step_state,(int16_t)(peakmax*1000),(int16_t)(valleymax*1000));
 #endif
 	ui32_step_sample_counter ++;
 }
@@ -1496,7 +1599,7 @@ void accel_calibration(void)
 {  
 	char X_offset, Y_offset, Z_offset;
 	uint8_t accel_data[6] = {0};
-	uint16_t Xout_12_bit,Yout_12_bit,Zout_12_bit;
+	uint16_t Xout_12_bit, Yout_12_bit, Zout_12_bit;
 
 	/* Standby Mode */
 	accel_standby();
@@ -1539,7 +1642,7 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
     uint16_t 	 	total_time_diff 			= 0, ui16_wheel_event_time = 0;	// event time is 1024-based time
     bool			report_last_flag			= false;
 
-    if(rw_lock_get())	// if rw_lock is ture means the critical global variable is updating.
+    if(RW_LOCK_GET())	// if rw_lock is ture means the critical global variable is updating.
     {
     	NRF_LOG_INFO("Warning!!! Read and Write collision, skip report");
     	return NRF_ERROR_INVALID_STATE;
@@ -1595,7 +1698,7 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 		if((uin16_not_moving_counter <= 1) // report first unchanged event
 	#ifdef	SENSOR_ALWAYS_REPORT_DEBUG
 			|| (uin16_not_moving_counter > ACCEL_CSC_NOMOVE_REPORT_COUNT)
-	#else
+	#endif
 		)
 		{
 			ui16_wheel_event_time = ui16_last_event_time;
@@ -1604,7 +1707,6 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 		{
 			return NRF_ERROR_INVALID_STATE;
 		}
-	#endif
 	}
 	else
 	{
@@ -1648,6 +1750,43 @@ ret_code_t accel_csc_measurement(ble_cscs_meas_t * p_measurement)
 	ui16_last_lap = ui16_total_step;
 	ui16_last_event_time = ui16_wheel_event_time;
     return NRF_SUCCESS;
+}
+
+/**@brief Function for accel_dump_reg_info
+ */
+ret_code_t accel_dump_reg_info(uint8_t * ctrl_reg , uint8_t size)
+{
+    //uint8_t ctrl_reg[22];
+    if (size < 20)
+    {
+    	return NRF_ERROR_INVALID_STATE;
+    }
+
+	accel_read_reg(LIS2DE12_REG0, 					&ctrl_reg[0] );
+	accel_read_reg(LIS2DE12_REG1, 					&ctrl_reg[1] );
+	accel_read_reg(LIS2DE12_REG2, 					&ctrl_reg[2] );
+	accel_read_reg(LIS2DE12_REG3, 					&ctrl_reg[3] );
+	accel_read_reg(LIS2DE12_REG4, 					&ctrl_reg[4] );
+	accel_read_reg(LIS2DE12_REG5, 					&ctrl_reg[5] );
+	accel_read_reg(LIS2DE12_REG6, 					&ctrl_reg[6] );
+	accel_read_reg(LIS2DE12_FIFO_CTRL_REG, 			&ctrl_reg[7] );
+	accel_read_reg(LIS2DE12_INT1_CFG_REG, 			&ctrl_reg[8] );
+	accel_read_reg(LIS2DE12_INT1_THRESHHOLD_REG, 	&ctrl_reg[9] );
+	accel_read_reg(LIS2DE12_INT1_DURATION_REG, 		&ctrl_reg[10] );
+	accel_read_reg(LIS2DE12_INT2_CFG_REG,		 	&ctrl_reg[11] );
+	accel_read_reg(LIS2DE12_INT2_THRESHHOLD_REG, 	&ctrl_reg[12] );
+	accel_read_reg(LIS2DE12_INT2_DURATION_REG, 		&ctrl_reg[13] );
+	accel_read_reg(LIS2DE12_CLICK_CFG_REG, 			&ctrl_reg[14] );
+	accel_read_reg(LIS2DE12_CLICK_THS_REG, 			&ctrl_reg[15] );
+	accel_read_reg(LIS2DE12_TIME_LIMIT_REG, 		&ctrl_reg[16] );
+	accel_read_reg(LIS2DE12_TIME_LATENCY_REG, 		&ctrl_reg[17] );
+	accel_read_reg(LIS2DE12_TIME_WINDOW_REG, 		&ctrl_reg[18] );
+	accel_read_reg(LIS2DE12_ACT_THS_REG, 			&ctrl_reg[19] );
+	//NRF_LOG_INFO("R:%x %x %x %x %x %x" ,ctrl_reg[0], ctrl_reg[1], ctrl_reg[2], ctrl_reg[3], ctrl_reg[4], ctrl_reg[5]);
+	//NRF_LOG_INFO("R:%x %x %x %x %x %x" ,ctrl_reg[6], ctrl_reg[7], ctrl_reg[8], ctrl_reg[9], ctrl_reg[10], ctrl_reg[11]);
+	//NRF_LOG_INFO("R:%x %x %x %x %x %x" ,ctrl_reg[12], ctrl_reg[13], ctrl_reg[14], ctrl_reg[15], ctrl_reg[16], ctrl_reg[17]);
+	//NRF_LOG_INFO("R:%x %x" ,ctrl_reg[18], ctrl_reg[19]);
+	return NRF_SUCCESS;
 }
 
 /**@brief Function initialize function.
